@@ -866,7 +866,11 @@ var
   LSpinCount: Integer;
   LState: Integer;
 begin
+{$IF CompilerVersion >= 35.0}
   LStartTick := TThread.GetTickCount64;
+{$ELSE}
+  LStartTick := GetTickCount64;
+{$IFEND}
   LSpinCount := 0;
 
   while True do
@@ -890,7 +894,7 @@ begin
     // 超时检查移到前面，避免不必要的Sleep
     if (ATimeout <> INFINITE) then
     begin
-      if (TThread.GetTickCount64 - LStartTick >= ATimeout) then
+      if ({$IF CompilerVersion >= 35.0}TThread.GetTickCount64{$ELSE}GetTickCount64{$IFEND} - LStartTick >= ATimeout) then
         Exit(TWaitResult.wrTimeout);
     end;
 
