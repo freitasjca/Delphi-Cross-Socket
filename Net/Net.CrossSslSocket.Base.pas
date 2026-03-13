@@ -105,6 +105,44 @@ type
     /// </param>
     procedure SetPrivateKeyFile(const APKeyFile: string);
 
+    // ── mTLS (mutual TLS / client-certificate authentication) ────────────────
+    // [MTLS-1] Load the CA certificate used to verify client certificates.
+    //   Call before Listen/Start.  Required when VerifyPeer = True.
+    //   The concrete implementation (TCrossOpenSslSocket) calls
+    //   SSL_CTX_add_client_CA + X509_STORE_add_cert on its private FContext.
+
+    /// <summary>
+    ///   从内存加载CA证书 (mTLS: 客户端证书验证)
+    /// </summary>
+    procedure SetCACertificate(const ACACertBuf: Pointer;
+      const ACACertBufSize: Integer); overload;
+
+    /// <summary>
+    ///   从字节数组加载CA证书
+    /// </summary>
+    procedure SetCACertificate(const ACACertBytes: TBytes); overload;
+
+    /// <summary>
+    ///   从字符串加载CA证书
+    /// </summary>
+    procedure SetCACertificate(const ACACertStr: string); overload;
+
+    /// <summary>
+    ///   从文件加载CA证书
+    /// </summary>
+    procedure SetCACertificateFile(const ACACertFile: string);
+
+    // [MTLS-2] Enable or disable client-certificate verification.
+    //   SSL_VERIFY_NONE (False)  = server-only TLS — no client cert required.
+    //   SSL_VERIFY_PEER (True)   = server requests client cert.
+    //   Combined with SSL_VERIFY_FAIL_IF_NO_PEER_CERT so that a missing or
+    //   invalid certificate aborts the handshake rather than continuing.
+
+    /// <summary>
+    ///   启用/禁用客户端证书验证 (mTLS)
+    /// </summary>
+    procedure SetVerifyPeer(const AVerify: Boolean);
+
     /// <summary>
     ///   是否已启用 SSL
     /// </summary>
@@ -139,6 +177,24 @@ type
     procedure SetPrivateKey(const APKeyBytes: TBytes); overload; virtual;
     procedure SetPrivateKey(const APKeyStr: string); overload; virtual;
     procedure SetPrivateKeyFile(const APKeyFile: string); virtual;
+
+    // ── mTLS ─────────────────────────────────────────────────────────────────
+    // [MTLS-1] SetCACertificate — abstract; implemented by TCrossOpenSslSocket.
+    //   Calls SSL_CTX_add_client_CA(FContext, LCACert) to add the CA to the
+    //   list of acceptable client CAs sent in the TLS handshake, and
+    //   X509_STORE_add_cert(SSL_CTX_get_cert_store(FContext), LCACert) so
+    //   OpenSSL can verify the client certificate against the CA chain.
+    procedure SetCACertificate(const ACACertBuf: Pointer;
+      const ACACertBufSize: Integer); overload; virtual; abstract;
+    procedure SetCACertificate(const ACACertBytes: TBytes); overload; virtual;
+    procedure SetCACertificate(const ACACertStr: string); overload; virtual;
+    procedure SetCACertificateFile(const ACACertFile: string); virtual;
+
+    // [MTLS-2] SetVerifyPeer — abstract; implemented by TCrossOpenSslSocket.
+    //   AVerify = True  → SSL_CTX_set_verify(FContext,
+    //                        SSL_VERIFY_PEER or SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nil)
+    //   AVerify = False → SSL_CTX_set_verify(FContext, SSL_VERIFY_NONE, nil)
+    procedure SetVerifyPeer(const AVerify: Boolean); virtual; abstract;
 
     property Ssl: Boolean read GetSsl;
   end;
@@ -188,6 +244,25 @@ end;
 procedure TCrossSslSocketBase.SetPrivateKeyFile(const APKeyFile: string);
 begin
   SetPrivateKey(TFileUtils.ReadAllBytes(APKeyFile));
+end;
+
+// ── mTLS convenience overloads ────────────────────────────────────────────────
+// These follow the same pattern as SetCertificate/SetPrivateKey:
+// convert to bytes/pointer and delegate to the abstract primitive.
+
+procedure TCrossSslSocketBase.SetCACertificate(const ACACertBytes: TBytes);
+begin
+  SetCACertificate(Pointer(ACACertBytes), Length(ACACertBytes));
+end;
+
+procedure TCrossSslSocketBase.SetCACertificate(const ACACertStr: string);
+begin
+  SetCACertificate(TEncoding.ANSI.GetBytes(ACACertStr));
+end;
+
+procedure TCrossSslSocketBase.SetCACertificateFile(const ACACertFile: string);
+begin
+  SetCACertificate(TFileUtils.ReadAllBytes(ACACertFile));
 end;
 
 { TCrossSslConnectionBase }
