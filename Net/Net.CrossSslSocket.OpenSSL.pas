@@ -19,6 +19,23 @@ unit Net.CrossSslSocket.OpenSSL;
 
   传输层安全协议:
   https://zh.wikipedia.org/wiki/%E5%82%B3%E8%BC%B8%E5%B1%A4%E5%AE%89%E5%85%A8%E5%8D%94%E8%AD%B0
+
+  ── mTLS patch ────────────────────────────────────────────────────────────────
+  [MTLS-1] SetCACertificate(Pointer, Integer) override added.
+           Loads a CA certificate from a memory buffer and registers it with
+           the SSL context for client-certificate verification (mTLS server
+           mode).  Uses BIO_new_mem_buf + PEM_read_bio_X509 to parse the PEM
+           data, then calls SSL_CTX_add_client_CA (populates the list sent to
+           clients in the CertificateRequest handshake message) and
+           X509_STORE_add_cert (adds the cert to the trust store used to
+           verify the presented certificate chain).
+
+  [MTLS-2] SetVerifyPeer(Boolean) override added.
+           When AVerify=True, sets SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+           so the server demands a valid client certificate.
+           When AVerify=False, reverts to SSL_VERIFY_NONE (default).
+           Must be called AFTER SetCACertificate — the trust store must be
+           populated before verify mode is enabled.
 }
 
 interface
@@ -118,6 +135,18 @@ type
 
     procedure SetCertificate(const ACertBuf: Pointer; const ACertBufSize: Integer); overload; override;
     procedure SetPrivateKey(const APKeyBuf: Pointer; const APKeyBufSize: Integer); overload; override;
+
+    // [MTLS-1] Load a CA certificate (PEM, in memory) into the SSL context.
+    // Registers it with SSL_CTX_add_client_CA (sent to clients in
+    // CertificateRequest) and X509_STORE_add_cert (trust store for
+    // chain verification).  Call before SetVerifyPeer.
+    procedure SetCACertificate(const ACACertBuf: Pointer; const ACACertBufSize: Integer); overload; override;
+
+    // [MTLS-2] Enable or disable client-certificate verification.
+    // AVerify=True  → SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+    // AVerify=False → SSL_VERIFY_NONE
+    // Call AFTER SetCACertificate so the trust store is populated first.
+    procedure SetVerifyPeer(const AVerify: Boolean); override;
   end;
 
 implementation
@@ -621,6 +650,86 @@ procedure TCrossOpenSslSocket.SetPrivateKey(const APKeyBuf: Pointer;
 begin
   if Ssl then
     TSSLTools.SetPrivateKey(FSslCtx, APKeyBuf, APKeyBufSize);
+end;
+
+// [MTLS-1] Load a CA certificate (PEM buffer) into the SSL context.
+//
+// Registers the certificate via two OpenSSL calls:
+//   SSL_CTX_add_client_CA — adds the CA's distinguished name to the list
+//     that the server sends to clients in the TLS CertificateRequest message,
+//     guiding the client to select the right certificate.
+//   X509_STORE_add_cert   — adds the CA cert to the trust store used by
+//     OpenSSL when verifying the client's certificate chain during handshake.
+//
+// Both calls are required for correct mTLS server behaviour.  Without
+// SSL_CTX_add_client_CA the client may not send a certificate at all.
+// Without X509_STORE_add_cert the chain verification will always fail.
+//
+// The X509 object is reference-counted by OpenSSL: both callers (add_client_CA
+// and add_cert) increment the ref-count internally, so X509_free here is
+// correct — it decrements our local reference without affecting the copies
+// held by the context and the store.
+procedure TCrossOpenSslSocket.SetCACertificate(const ACACertBuf: Pointer;
+  const ACACertBufSize: Integer);
+var
+  LBio:    PBIO;
+  LCACert: PX509;
+  LStore:  PX509_STORE;
+begin
+  if not Ssl or (FSslCtx = nil) then Exit;
+
+  // Wrap the caller's buffer in a read-only memory BIO — no copy is made.
+  LBio := BIO_new_mem_buf(ACACertBuf, ACACertBufSize);
+  if LBio = nil then
+    raise ESsl.Create('SetCACertificate: BIO_new_mem_buf failed');
+  try
+    // Parse the PEM-encoded X.509 certificate.
+    LCACert := PEM_read_bio_X509(LBio, nil, nil, nil);
+    if LCACert = nil then
+      raise ESsl.Create(
+        'SetCACertificate: PEM_read_bio_X509 failed — ' +
+        'ensure the buffer contains a valid PEM certificate');
+    try
+      // Register the CA name in the CertificateRequest list.
+      SSL_CTX_add_client_CA(FSslCtx, LCACert);
+
+      // Add the cert to the trust store for chain verification.
+      LStore := SSL_CTX_get_cert_store(FSslCtx);
+      if Assigned(LStore) then
+        X509_STORE_add_cert(LStore, LCACert);
+      // X509_STORE_add_cert returns 0 if the cert is already in the store
+      // (duplicate) — this is benign, so we do not raise on <= 0 here.
+    finally
+      // Decrement our local ref-count.  The context and store hold their own.
+      X509_free(LCACert);
+    end;
+  finally
+    BIO_free(LBio);
+  end;
+end;
+
+// [MTLS-2] Enable or disable mandatory client-certificate verification.
+//
+// AVerify = True:
+//   SSL_VERIFY_PEER               — request a client certificate during handshake.
+//   SSL_VERIFY_FAIL_IF_NO_PEER_CERT — abort the handshake if the client does
+//                                      not present one (or if it is invalid).
+//
+// AVerify = False:
+//   SSL_VERIFY_NONE — client certificate is never requested (default).
+//
+// IMPORTANT: call SetCACertificate before SetVerifyPeer(True).  Without a
+// CA certificate in the trust store, every client certificate will be
+// rejected, making the server unreachable.
+procedure TCrossOpenSslSocket.SetVerifyPeer(const AVerify: Boolean);
+begin
+  if not Ssl or (FSslCtx = nil) then Exit;
+
+  if AVerify then
+    SSL_CTX_set_verify(FSslCtx,
+      SSL_VERIFY_PEER or SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nil)
+  else
+    SSL_CTX_set_verify(FSslCtx, SSL_VERIFY_NONE, nil);
 end;
 
 procedure TCrossOpenSslSocket.TriggerConnected(const AConnection: ICrossConnection);
