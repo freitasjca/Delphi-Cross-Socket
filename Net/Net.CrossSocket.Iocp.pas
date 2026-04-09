@@ -7,6 +7,17 @@
 {       Homepage: https://github.com/winddriver/Delphi-Cross-Socket            }
 {                                                                              }
 {******************************************************************************}
+
+{ PATCH-IOCP-1: fix DEBUG-build shutdown cascade (995 → _NewAccept → 10038 → 995).
+  Root cause: LErrNo was declared only in {$IFDEF DEBUG *, so the WSA_OPERATION_ABORTED
+  guard at the _NewAccept call site called GetLastError() a second time — after
+  _LogLastOsError() had already made Win32 calls that reset the thread's last-error
+  value.  The guard then evaluated to True on a listener that was already closed,
+  called _NewAccept which failed with 10038 (not a socket), which fed back into
+  ProcessIoEvent as another 995, producing the cascade visible in the log.
+  Fix: always declare LErrNo; save GetLastError() immediately after GQCS fails,
+  before any other call; use LErrNo (not GetLastError()) at the _NewAccept guard. }
+
 unit Net.CrossSocket.Iocp;
 
 {$I zLib.inc}
@@ -734,14 +745,17 @@ var
   LSocket: TSocket;
   LPerIoData: PPerIoData;
   LConnection: ICrossConnection;
-  {$IFDEF DEBUG}
+  // PATCH-IOCP-1: always declare LErrNo so the WSA_OPERATION_ABORTED guard
+  // below uses the value captured immediately after GetQueuedCompletionStatus,
+  // before _LogLastOsError (or any other Win32 call) resets the thread's
+  // last-error value.
   LErrNo: Cardinal;
-  {$ENDIF}
 begin
   if not GetQueuedCompletionStatus(FIocpHandle, LBytes, ULONG_PTR(LSocket), POverlapped(LPerIoData), INFINITE) then
   begin
-    {$IFDEF DEBUG}
+    // PATCH-IOCP-1: capture before any other call that could reset last-error.
     LErrNo := GetLastError;
+    {$IFDEF DEBUG}
     // 完成端口被关闭时可能会触发 ERROR_INVALID_HANDLE 和 ERROR_ABANDONED_WAIT_0
     if (LErrNo <> ERROR_INVALID_HANDLE)
       and (LErrNo <> ERROR_ABANDONED_WAIT_0)
@@ -770,7 +784,8 @@ begin
             TSocketAPI.CloseSocket(LPerIoData.Socket);
 
           // 关闭监听后会触发该错误, 这种情况不应该继续投递
-          if (GetLastError <> WSA_OPERATION_ABORTED) then
+          // PATCH-IOCP-1: use LErrNo (captured before _LogLastOsError)
+          if (LErrNo <> WSA_OPERATION_ABORTED) then
             _NewAccept(LPerIoData.CrossData as ICrossListen);
         end else
         begin
