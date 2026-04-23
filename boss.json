@@ -5,7 +5,7 @@
   "homepage": "https://github.com/freitasjca/Delphi-Cross-Socket",
   "license": "MIT",
   "mainsrc": "Net/",
-  "browsingpath": "Net/;Utils/;DelphiToFPC;CnPack/Common/;CnPack/Crypto",
+  "browsingpath": "Net/;Utils/;CnPack/Common/;CnPack/Crypto/",
   "projects": [],
   "dependencies": {}
 }
