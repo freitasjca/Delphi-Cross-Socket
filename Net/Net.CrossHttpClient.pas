@@ -383,7 +383,7 @@ type
   /// </summary>
   {$ENDREGION}
   ICrossHttpClientSocket = interface(ICrossSslSocket)
-  ['{F689E29A-0489-4F1E-A0B8-64DA80B0862E}']
+  ['{8944949B-EC8D-406E-B471-F1BF6BEDA15B}']
     function GetLocalPort: Word;
     procedure SetLocalPort(const AValue: Word);
 
@@ -436,7 +436,7 @@ type
   /// </summary>
   {$ENDREGION}
   ICrossHttpClient = interface
-  ['{99CC5305-02FE-48DA-9D62-3AE1A5FA86D1}']
+  ['{A136B460-1A81-42D8-9724-EDB7E65EFB3C}']
     function GetIdleout: Integer;
     function GetIoThreads: Integer;
     function GetMaxConnsPerServer: Integer;
@@ -446,6 +446,7 @@ type
     function GetConnectTimeout: Integer;
     function GetAutoUrlEncode: Boolean;
     function GetLocalPort: Word;
+    function GetVerifyPeer: Boolean;
 
     procedure SetIdleout(const AValue: Integer);
     procedure SetIoThreads(const AValue: Integer);
@@ -456,6 +457,128 @@ type
     procedure SetConnectTimeout(const AValue: Integer);
     procedure SetAutoUrlEncode(const AValue: Boolean);
     procedure SetLocalPort(const AValue: Word);
+    procedure SetVerifyPeer(const AValue: Boolean);
+
+    /// <summary>
+    ///   设置客户端证书
+    /// </summary>
+    /// <param name="ACertBuf">
+    ///   证书内存指针
+    /// </param>
+    /// <param name="ACertBufSize">
+    ///   证书内存大小
+    /// </param>
+    procedure SetCertificate(const ACertBuf: Pointer;
+      const ACertBufSize: Integer); overload;
+    /// <summary>
+    ///   设置客户端证书
+    /// </summary>
+    /// <param name="ACertBytes">
+    ///   证书字节数组
+    /// </param>
+    procedure SetCertificate(const ACertBytes: TBytes); overload;
+    /// <summary>
+    ///   设置客户端证书
+    /// </summary>
+    /// <param name="ACertStr">
+    ///   证书字符串
+    /// </param>
+    procedure SetCertificate(const ACertStr: string); overload;
+    /// <summary>
+    ///   设置客户端证书文件
+    /// </summary>
+    /// <param name="ACertFile">
+    ///   证书文件路径
+    /// </param>
+    procedure SetCertificateFile(const ACertFile: string);
+
+    /// <summary>
+    ///   设置客户端私钥
+    /// </summary>
+    /// <param name="APKeyBuf">
+    ///   私钥内存指针
+    /// </param>
+    /// <param name="APKeyBufSize">
+    ///   私钥内存大小
+    /// </param>
+    /// <param name="APassword">
+    ///   私钥密码, 默认为空
+    /// </param>
+    procedure SetPrivateKey(const APKeyBuf: Pointer;
+      const APKeyBufSize: Integer; const APassword: string = ''); overload;
+    /// <summary>
+    ///   设置客户端私钥
+    /// </summary>
+    /// <param name="APKeyBytes">
+    ///   私钥字节数组
+    /// </param>
+    /// <param name="APassword">
+    ///   私钥密码, 默认为空
+    /// </param>
+    procedure SetPrivateKey(const APKeyBytes: TBytes;
+      const APassword: string = ''); overload;
+    /// <summary>
+    ///   设置客户端私钥
+    /// </summary>
+    /// <param name="APKeyStr">
+    ///   私钥字符串
+    /// </param>
+    /// <param name="APassword">
+    ///   私钥密码, 默认为空
+    /// </param>
+    procedure SetPrivateKey(const APKeyStr: string;
+      const APassword: string = ''); overload;
+    /// <summary>
+    ///   设置客户端私钥文件
+    /// </summary>
+    /// <param name="APKeyFile">
+    ///   私钥文件路径
+    /// </param>
+    /// <param name="APassword">
+    ///   私钥密码, 默认为空
+    /// </param>
+    procedure SetPrivateKeyFile(const APKeyFile: string;
+      const APassword: string = '');
+
+    /// <summary>
+    ///   从内存追加用于验证 HTTPS 服务端证书链的受信任 CA 证书
+    /// </summary>
+    /// <remarks>
+    ///   此方法只配置服务端证书的信任锚，不会设置 mTLS 客户端身份。
+    ///   mTLS 客户端证书和私钥应分别通过 SetCertificate 和 SetPrivateKey
+    ///   设置。应先添加至少一个 CA，再设置 VerifyPeer=True，并且必须在
+    ///   首个 HTTPS 连接创建前完成配置。可多次调用以累积 CA，也可一次
+    ///   传入 PEM bundle；自签名服务端证书也可以作为信任锚直接添加。
+    /// </remarks>
+    /// <param name="ABuf">
+    ///   CA 证书或 PEM bundle 内存指针
+    /// </param>
+    /// <param name="ASize">
+    ///   CA 证书缓冲区大小
+    /// </param>
+    procedure AddCACertificate(const ABuf: Pointer;
+      const ASize: Integer); overload;
+    /// <summary>
+    ///   从字节数组追加用于验证 HTTPS 服务端证书链的受信任 CA 证书
+    /// </summary>
+    /// <param name="ABytes">
+    ///   CA 证书或 PEM bundle 字节数组
+    /// </param>
+    procedure AddCACertificate(const ABytes: TBytes); overload;
+    /// <summary>
+    ///   从字符串追加用于验证 HTTPS 服务端证书链的受信任 CA 证书
+    /// </summary>
+    /// <param name="AText">
+    ///   CA 证书或 PEM bundle 字符串
+    /// </param>
+    procedure AddCACertificate(const AText: string); overload;
+    /// <summary>
+    ///   从文件追加用于验证 HTTPS 服务端证书链的受信任 CA 证书
+    /// </summary>
+    /// <param name="AFileName">
+    ///   CA 证书或 PEM bundle 文件路径
+    /// </param>
+    procedure AddCACertificateFile(const AFileName: string);
 
     {$REGION 'Documentation'}
     /// <summary>
@@ -806,6 +929,11 @@ type
     ///   本地端口(一般不需要指定, 设置为0由系统随机分配, 默认为0; 一定要在首次调用请求之前设置)
     /// </summary>
     property LocalPort: Word read GetLocalPort write SetLocalPort;
+
+    /// <summary>
+    ///   是否强制验证对端证书。服务端要求客户端证书，客户端同时验证服务端主机名。
+    /// </summary>
+    property VerifyPeer: Boolean read GetVerifyPeer write SetVerifyPeer;
   end;
 
   TCrossHttpClientConnection = class(TCrossSslConnection, ICrossHttpClientConnection)
@@ -826,17 +954,6 @@ type
     FResponse: ICrossHttpClientResponse;
     FHttpParser: ICrossHttpParser;
     FReqLock: ILock;
-
-    // [PATCH-CSHTTP-3]
-    // FRespDataReceived: response bytes have arrived for the request in
-    //   flight (set in ParseRecvData, cleared in DoRequest). Once the server
-    //   has started answering, a failure is no longer a stale-connection
-    //   race and must not be retried (non-idempotent side effects may have
-    //   happened; a garbled response is a real error).
-    // FNoRetry: set during Destroy — the owner socket / dock dictionary may
-    //   be mid-teardown, so re-dispatching would touch freed state.
-    FRespDataReceived: Boolean;
-    FNoRetry: Boolean;
 
     procedure _OnHeaderData(const ADataPtr: Pointer; const ADataSize: Integer);
     function _OnGetHeaderValue(const AHeaderName: string; out AHeaderValues: TArray<string>): Boolean;
@@ -873,10 +990,10 @@ type
     procedure ParseRecvData(var ABuf: Pointer; var ALen: Integer); virtual;
 
     {$region '内部: 基础发送方法'}
-    procedure _Send(const ASource: TCrossHttpChunkDataFunc;
-      const ASendCb: TCrossConnectionCallback = nil); overload;
-    procedure _Send(const AHeaderSource, ABodySource: TCrossHttpChunkDataFunc;
-      const ASendCb: TCrossConnectionCallback = nil); overload;
+    procedure _SocketSend(const ASource: TCrossHttpChunkDataFunc;
+      const ASendCb: TCrossConnectionCallback = nil);
+    procedure _HttpSend(const AHeaderSource, ABodySource: TCrossHttpChunkDataFunc;
+      const ASendCb: TCrossConnectionCallback = nil);
     {$endregion}
 
     {$region '不压缩发送'}
@@ -934,17 +1051,6 @@ type
     FPathAndParams, FPath: string;
     FHeader: THttpHeader;
     FCookies: TRequestCookies;
-
-    // [PATCH-CSHTTP-3] stale keep-alive retry state.
-    // FViaReusedConnection: the most recent dispatch of this request went to an
-    //   idle pooled connection (TServerDock.DoRequest sets it on every dispatch).
-    //   A reused connection may have been closed by the server between requests;
-    //   the write still succeeds locally, then the read fails — the classic
-    //   stale keep-alive race every mainstream HTTP client retries through.
-    // FRetried: this request has already been re-dispatched once; a second
-    //   failure is reported to the caller (bounded retry, like WinHTTP/curl).
-    FViaReusedConnection: Boolean;
-    FRetried: Boolean;
 
     procedure _ParseUrl;
     procedure _Init(
@@ -1174,9 +1280,14 @@ type
     FRequestTimeout, FIdleout, FConnectTimeout: Integer;
     FReUseConnection, FAutoUrlEncode: Boolean;
     FLocalPort: Word;
+    FVerifyPeer: Boolean;
+    FCertificate, FPrivateKey: TBytes;
+    FPrivateKeyPassword: string;
+    FCACertificates: TArray<TBytes>;
 
     procedure _ProcTimeout;
     procedure _UpdateCliOptions;
+    procedure _ApplyTlsOptions(const ACli: ICrossHttpClientSocket);
   protected
     procedure _Lock; inline;
     procedure _Unlock; inline;
@@ -1192,6 +1303,7 @@ type
     function GetConnectTimeout: Integer;
     function GetAutoUrlEncode: Boolean;
     function GetLocalPort: Word;
+    function GetVerifyPeer: Boolean;
 
     procedure SetIdleout(const AValue: Integer);
     procedure SetIoThreads(const AValue: Integer);
@@ -1202,6 +1314,7 @@ type
     procedure SetConnectTimeout(const AValue: Integer);
     procedure SetAutoUrlEncode(const AValue: Boolean);
     procedure SetLocalPort(const AValue: Word);
+    procedure SetVerifyPeer(const AValue: Boolean);
   public
     constructor Create(const AIoThreads, AMaxConnsPerServer: Integer;
       const ACompressType: TCompressType = ctNone); overload;
@@ -1212,6 +1325,27 @@ type
     procedure Prepare(const AProtocols: array of string);
 
     procedure CancelAll; virtual;
+
+    procedure SetCertificate(const ACertBuf: Pointer;
+      const ACertBufSize: Integer); overload;
+    procedure SetCertificate(const ACertBytes: TBytes); overload;
+    procedure SetCertificate(const ACertStr: string); overload;
+    procedure SetCertificateFile(const ACertFile: string);
+
+    procedure SetPrivateKey(const APKeyBuf: Pointer;
+      const APKeyBufSize: Integer; const APassword: string = ''); overload;
+    procedure SetPrivateKey(const APKeyBytes: TBytes;
+      const APassword: string = ''); overload;
+    procedure SetPrivateKey(const APKeyStr: string;
+      const APassword: string = ''); overload;
+    procedure SetPrivateKeyFile(const APKeyFile: string;
+      const APassword: string = '');
+
+    procedure AddCACertificate(const ABuf: Pointer;
+      const ASize: Integer); overload;
+    procedure AddCACertificate(const ABytes: TBytes); overload;
+    procedure AddCACertificate(const AText: string); overload;
+    procedure AddCACertificateFile(const AFileName: string);
 
     {$region '裸数据请求'}
     // 所有请求方法的核心
@@ -1286,6 +1420,7 @@ type
     property ConnectTimeout: Integer read GetConnectTimeout write SetConnectTimeout;
     property AutoUrlEncode: Boolean read GetAutoUrlEncode write SetAutoUrlEncode;
     property LocalPort: Word read GetLocalPort write SetLocalPort;
+    property VerifyPeer: Boolean read GetVerifyPeer write SetVerifyPeer;
   end;
 
 const
@@ -1348,9 +1483,6 @@ begin
     FRequestObj := LRequestObj;
     FRequest := ARequest;
 
-    // [PATCH-CSHTTP-3] new request in flight — no response bytes seen yet
-    FRespDataReceived := False;
-
     // 设置响应回调
     if Assigned(ACallback) then
       FCallback := ACallback
@@ -1395,12 +1527,7 @@ end;
 destructor TCrossHttpClientConnection.Destroy;
 begin
   if Assigned(FCallback) then
-  begin
-    // [PATCH-CSHTTP-3] object teardown: the owner socket and its dock
-    // dictionary may be mid-destruction — re-dispatching is unsafe here
-    FNoRetry := True;
     TriggerResponseFailed(400, 'Connection destroyed');
-  end;
 
   FHttpParser := nil;
 
@@ -1436,11 +1563,6 @@ procedure TCrossHttpClientConnection.ParseRecvData(var ABuf: Pointer;
   var ALen: Integer);
 begin
   _UpdateWatch;
-
-  // [PATCH-CSHTTP-3] the server has started answering — from here on a
-  // failure must be reported, never retried
-  if (ALen > 0) then
-    FRespDataReceived := True;
 
 //  _Log('ParseRecvData, %s, 0x%x, %d', [Self.DebugInfo, NativeUInt(ABuf), ALen]);
   if (FHttpParser <> nil) then
@@ -1484,7 +1606,7 @@ begin
   LIsFirstChunk := True;
   LChunkState := csHead;
 
-  _Send(
+  _HttpSend(
     // HEADER
     function(const AData: PPointer; const ADataSize: PNativeInt): Boolean
     begin
@@ -1586,7 +1708,7 @@ begin
   P := ABody;
   LBodySize := ABodySize;
 
-  _Send(
+  _HttpSend(
     // HEADER
     function(const AData: PPointer; const ADataSize: PNativeInt): Boolean
     begin
@@ -1782,71 +1904,13 @@ var
   LCallback: TCrossHttpResponseProc;
   LResponse: ICrossHttpClientResponse;
   LRequestEnded: Boolean;
-  LRetryRequest: ICrossHttpClientRequest;
-  LRetryRequestObj: TCrossHttpClientRequest;
-  LClientSocket: TCrossHttpClientSocket;
-  LServerDock: IServerDock;
-  LDockFound: Boolean;
-  LIdempotent: Boolean;
 begin
   LCallback := nil;
   LRequestEnded := False;
-  LRetryRequest := nil;
   _ReqLock;
   try
     // 只在请求进行中的状态才处理, 防止竞态下重复触发回调与 _EndRequest 多减计数
     if not (RequestStatus in [rsIdle, rsSending, rsResponding]) then Exit;
-
-    // [PATCH-CSHTTP-3] connection-failure retry (the behaviour WinHTTP, curl
-    // and every mainstream client implement). Two justifications, either
-    // suffices:
-    //   - the dispatch rode a REUSED pooled connection AND no response byte
-    //     arrived: the server had almost certainly already closed it (stale
-    //     keep-alive race), so the request never reached the application —
-    //     safe for ANY method;
-    //   - the method is IDEMPOTENT (GET/HEAD/PUT/DELETE/OPTIONS): RFC 7230
-    //     §6.3.1 explicitly permits automatic retry of idempotent requests
-    //     that failed, REGARDLESS of how far the failed attempt got — fresh
-    //     connection, zero bytes, or a partial response cut off by a
-    //     close/RST (observed: fphttpserver killing a HEAD response
-    //     mid-delivery leaves respData=True; re-execution is safe by
-    //     definition). POST stays reused-and-zero-bytes-only.
-    // Always required:
-    //   - not tearing down (FNoRetry, set in Destroy)
-    //   - not already retried (bounded: one retry per request)
-    //   - the body is replayable: pointer+size (caller keeps the memory
-    //     alive until the callback fires) or no body. A chunk-source body
-    //     (FRequestBodyFunc) may be a stateful stream closure — not safe.
-    if (FRequestObj <> nil) then
-      LIdempotent := SameText(FRequestObj.FMethod, 'GET')
-        or SameText(FRequestObj.FMethod, 'HEAD')
-        or SameText(FRequestObj.FMethod, 'PUT')
-        or SameText(FRequestObj.FMethod, 'DELETE')
-        or SameText(FRequestObj.FMethod, 'OPTIONS')
-    else
-      LIdempotent := False;
-
-    if (not FNoRetry)
-      and (FRequestObj <> nil)
-      and ((FRequestObj.FViaReusedConnection and (not FRespDataReceived))
-        or LIdempotent)
-      and (not FRequestObj.FRetried)
-      and (not Assigned(FRequestObj.FRequestBodyFunc)) then
-    begin
-      FRequestObj.FRetried := True;
-      LRetryRequest := FRequest;
-    end
-    else if (FRequestObj <> nil) and IsConsole then
-      // diagnostic mirror of the retry log: shows WHICH gate refused, so a
-      // surfaced failure can be attributed (fresh-connection failure, second
-      // failure after retry, response bytes already seen, non-replayable body)
-      Writeln('[PATCH-CSHTTP-3] NOT retrying (noRetry=', FNoRetry,
-        ' reused=', FRequestObj.FViaReusedConnection,
-        ' retried=', FRequestObj.FRetried,
-        ' respData=', FRespDataReceived,
-        ' chunkBody=', Assigned(FRequestObj.FRequestBodyFunc),
-        ') status=', AStatusCode, ' "', AStatusText, '": ',
-        FRequestObj.FMethod, ' ', FRequestObj.FUrl);
 
     LCallback := FCallback;
     FCallback := nil;
@@ -1865,78 +1929,6 @@ begin
   end;
 
   Close;
-
-  // [PATCH-CSHTTP-3] re-dispatch through the server dock instead of failing.
-  // This connection is already rsRespondFailed + closed, so GetIdleConnection
-  // cannot hand it out again; the retry lands on another idle connection or a
-  // fresh connect. The dropped LCallback closure is only released, never
-  // invoked — the request object still owns the user callback and fires it
-  // exactly once when the retry completes (or fails: FRetried blocks a loop).
-  if (LRetryRequest <> nil) then
-  begin
-    LRetryRequestObj := LRetryRequest as TCrossHttpClientRequest;
-    try
-      LClientSocket := Owner as TCrossHttpClientSocket;
-      LClientSocket._LockServerDock;
-      try
-        LDockFound := LClientSocket._GetServerDock(FProtocol, FHost, FPort, LServerDock);
-      finally
-        LClientSocket._UnlockServerDock;
-      end;
-
-      if LDockFound then
-      begin
-        // CrossSocketLogEnabled is False in RELEASE, so _Log alone leaves the
-        // retry invisible — echo to the console too (silent in GUI hosts) so
-        // test runs show exactly when a retry fires.
-        if IsConsole then
-          Writeln('[PATCH-CSHTTP-3] retrying request after connection failure',
-            ' (reused=', LRetryRequestObj.FViaReusedConnection, '): ',
-            LRetryRequestObj.FMethod, ' ', LRetryRequestObj.FUrl);
-        _Log('Retrying request after connection failure (reused=%s): %s %s',
-          [BoolToStr(LRetryRequestObj.FViaReusedConnection, True),
-           LRetryRequestObj.FMethod, LRetryRequestObj.FUrl]);
-
-        // Dispatch the retry after a short pause, on a throwaway thread —
-        // never block the IO thread running this failure callback. The pause
-        // is load-bearing: an immediate retry (<1 ms after the failure) was
-        // observed to die in the same transient that killed the first
-        // attempt (backend mid-teardown of the previous connection). 50 ms is
-        // a minimal backoff that clears a real server's connection-teardown
-        // window while staying invisible in practice; retries are rare, so
-        // neither the pause nor the throwaway thread matters on the hot path.
-        // (The pathological WSL2 localhost-forwarding proxy could stretch the
-        // accepted-but-dead window toward ~70 ms; that is a test-harness
-        // artifact, not a real-network condition, and a stray second failure
-        // there simply surfaces as the normal error.)
-        TThread.CreateAnonymousThread(
-          procedure
-          begin
-            TThread.Sleep(50);
-            try
-              LServerDock.DoRequest(LRetryRequest);
-            except
-              on E: Exception do
-              begin
-                _Log('Retry dispatch failed: %s', [E.Message]);
-                try
-                  (LRetryRequest as TCrossHttpClientRequest)._ExecCallback(
-                    TCrossHttpClientResponse.Create(AStatusCode,
-                      'Retry dispatch failed: ' + E.Message));
-                except
-                end;
-              end;
-            end;
-          end).Start;
-        Exit;
-      end;
-    except
-      on E: Exception do
-        _Log('Stale-connection retry dispatch failed: %s', [E.Message]);
-    end;
-    // dock gone or dispatch raised — fall through and fail the request via
-    // the normal callback path below (which also advances the dock queue)
-  end;
 
   if Assigned(LCallback) then
   try
@@ -2266,7 +2258,7 @@ begin
   FReqLock.Leave;
 end;
 
-procedure TCrossHttpClientConnection._Send(
+procedure TCrossHttpClientConnection._SocketSend(
   const ASource: TCrossHttpChunkDataFunc;
   const ASendCb: TCrossConnectionCallback);
 var
@@ -2274,17 +2266,6 @@ var
   LSender: TCrossConnectionCallback;
 begin
   LHttpConnection := Self;
-
-  // 标记正在发送请求
-  _ReqLock;
-  try
-    _SetRequestStatus(rsSending);
-  finally
-    _ReqUnlock;
-  end;
-
-  // 更新计时器
-  _UpdateWatch;
 
   LSender :=
     procedure(const AConnection: ICrossConnection; const ASuccess: Boolean)
@@ -2350,22 +2331,35 @@ begin
   LSender(LHttpConnection, True);
 end;
 
-procedure TCrossHttpClientConnection._Send(const AHeaderSource,
+procedure TCrossHttpClientConnection._HttpSend(const AHeaderSource,
   ABodySource: TCrossHttpChunkDataFunc;
   const ASendCb: TCrossConnectionCallback);
 var
-  LHeaderDone: Boolean;
+  LMethodIsHead, LHeaderDone: Boolean;
 begin
+  // 更新计时器
+  _UpdateWatch;
+
+  _ReqLock;
+  try
+    // 标记正在发送请求
+    _SetRequestStatus(rsSending);
+
+    LMethodIsHead := (FRequest <> nil) and (FRequest.Method = 'HEAD');
+  finally
+    _ReqUnlock;
+  end;
+
   // HEAD 请求不应包含请求体 (RFC 7231 §4.3.2)
-  if (FRequest.Method = 'HEAD') then
+  if LMethodIsHead then
   begin
-    _Send(AHeaderSource, ASendCb);
+    _SocketSend(AHeaderSource, ASendCb);
     Exit;
   end;
 
   LHeaderDone := False;
 
-  _Send(
+  _SocketSend(
     function(const AData: PPointer; const ADataSize: PNativeInt): Boolean
     begin
       if not LHeaderDone then
@@ -2969,6 +2963,10 @@ begin
   if (FHttpsCli <> nil) then
     FHttpsCli.StopLoop;
 
+  if Length(FPrivateKey) > 0 then
+    FillChar(FPrivateKey[0], Length(FPrivateKey), 0);
+  FPrivateKeyPassword := '';
+
   inherited;
 end;
 
@@ -2978,6 +2976,8 @@ begin
 end;
 
 function TCrossHttpClient.CreateHttpCli(const AProtocol: string): ICrossHttpClientSocket;
+var
+  LHttpsCli: ICrossHttpClientSocket;
 begin
   // 注意：调用方应该已经持有锁，这里的断言用于调试验证
   // 如果外部没有加锁，此方法内部不再重复加锁，以避免死锁
@@ -2998,10 +2998,12 @@ begin
   begin
     if (FHttpsCli = nil) then
     begin
-      FHttpsCli := TCrossHttpClientSocket.Create(Self, FIoThreads,
+      LHttpsCli := TCrossHttpClientSocket.Create(Self, FIoThreads,
         FMaxConnsPerServer, FMaxCompressRatio, True,
         FReUseConnection, FAutoUrlEncode,
         FCompressType);
+      _ApplyTlsOptions(LHttpsCli);
+      FHttpsCli := LHttpsCli;
       FHttpCliArr := FHttpCliArr + [FHttpsCli];
     end;
 
@@ -3190,6 +3192,150 @@ begin
     ACallback);
 end;
 
+procedure TCrossHttpClient._ApplyTlsOptions(
+  const ACli: ICrossHttpClientSocket);
+var
+  LCACertificate: TBytes;
+begin
+  if Length(FCertificate) > 0 then
+    ACli.SetCertificate(FCertificate);
+  if Length(FPrivateKey) > 0 then
+    ACli.SetPrivateKey(FPrivateKey, FPrivateKeyPassword);
+  for LCACertificate in FCACertificates do
+    ACli.AddCACertificate(LCACertificate);
+  ACli.VerifyPeer := FVerifyPeer;
+end;
+
+procedure TCrossHttpClient.AddCACertificate(const ABuf: Pointer;
+  const ASize: Integer);
+var
+  LBytes: TBytes;
+begin
+  if (ABuf = nil) or (ASize <= 0) then
+    raise ECrossHttpClient.Create('CA certificate data is empty.');
+
+  SetLength(LBytes, ASize);
+  Move(ABuf^, LBytes[0], ASize);
+
+  _Lock;
+  try
+    if FHttpsCli <> nil then
+      FHttpsCli.AddCACertificate(LBytes);
+    FCACertificates := FCACertificates + [LBytes];
+  finally
+    _Unlock;
+  end;
+end;
+
+procedure TCrossHttpClient.AddCACertificate(const ABytes: TBytes);
+begin
+  AddCACertificate(Pointer(ABytes), Length(ABytes));
+end;
+
+procedure TCrossHttpClient.AddCACertificate(const AText: string);
+begin
+  AddCACertificate(TEncoding.ANSI.GetBytes(AText));
+end;
+
+procedure TCrossHttpClient.AddCACertificateFile(const AFileName: string);
+begin
+  AddCACertificate(TFileUtils.ReadAllBytes(AFileName));
+end;
+
+procedure TCrossHttpClient.SetCertificate(const ACertBuf: Pointer;
+  const ACertBufSize: Integer);
+var
+  LBytes: TBytes;
+begin
+  if (ACertBuf = nil) or (ACertBufSize <= 0) then
+    raise ECrossHttpClient.Create('Certificate data is empty.');
+
+  SetLength(LBytes, ACertBufSize);
+  Move(ACertBuf^, LBytes[0], ACertBufSize);
+
+  _Lock;
+  try
+    if FHttpsCli <> nil then
+      FHttpsCli.SetCertificate(LBytes);
+    FCertificate := LBytes;
+  finally
+    _Unlock;
+  end;
+end;
+
+procedure TCrossHttpClient.SetCertificate(const ACertBytes: TBytes);
+begin
+  SetCertificate(Pointer(ACertBytes), Length(ACertBytes));
+end;
+
+procedure TCrossHttpClient.SetCertificate(const ACertStr: string);
+begin
+  SetCertificate(TEncoding.ANSI.GetBytes(ACertStr));
+end;
+
+procedure TCrossHttpClient.SetCertificateFile(const ACertFile: string);
+begin
+  SetCertificate(TFileUtils.ReadAllBytes(ACertFile));
+end;
+
+procedure TCrossHttpClient.SetPrivateKey(const APKeyBuf: Pointer;
+  const APKeyBufSize: Integer; const APassword: string);
+var
+  LBytes: TBytes;
+begin
+  if (APKeyBuf = nil) or (APKeyBufSize <= 0) then
+    raise ECrossHttpClient.Create('Private key data is empty.');
+
+  SetLength(LBytes, APKeyBufSize);
+  Move(APKeyBuf^, LBytes[0], APKeyBufSize);
+
+  _Lock;
+  try
+    if FHttpsCli <> nil then
+      FHttpsCli.SetPrivateKey(LBytes, APassword);
+    if Length(FPrivateKey) > 0 then
+      FillChar(FPrivateKey[0], Length(FPrivateKey), 0);
+    FPrivateKey := LBytes;
+    FPrivateKeyPassword := APassword;
+  finally
+    _Unlock;
+  end;
+end;
+
+procedure TCrossHttpClient.SetPrivateKey(const APKeyBytes: TBytes;
+  const APassword: string);
+begin
+  SetPrivateKey(Pointer(APKeyBytes), Length(APKeyBytes), APassword);
+end;
+
+procedure TCrossHttpClient.SetPrivateKey(const APKeyStr,
+  APassword: string);
+var
+  LBytes: TBytes;
+begin
+  LBytes := TEncoding.ANSI.GetBytes(APKeyStr);
+  try
+    SetPrivateKey(LBytes, APassword);
+  finally
+    if Length(LBytes) > 0 then
+      FillChar(LBytes[0], Length(LBytes), 0);
+  end;
+end;
+
+procedure TCrossHttpClient.SetPrivateKeyFile(const APKeyFile,
+  APassword: string);
+var
+  LBytes: TBytes;
+begin
+  LBytes := TFileUtils.ReadAllBytes(APKeyFile);
+  try
+    SetPrivateKey(LBytes, APassword);
+  finally
+    if Length(LBytes) > 0 then
+      FillChar(LBytes[0], Length(LBytes), 0);
+  end;
+end;
+
 procedure TCrossHttpClient._Lock;
 begin
   FLock.Enter;
@@ -3325,13 +3471,28 @@ procedure TCrossHttpClient.DoRequest(const AMethod, AUrl: string;
   const AInitProc: TCrossHttpRequestInitProc;
   const ACallback: TCrossHttpResponseProc);
 var
+  LIsGetReq: Boolean;
+  LUrl, LReqStr: string;
   LReqBytes: TBytes;
 begin
+  LIsGetReq := TStrUtils.SameText(AMethod, THttpMethod.GET);
+  LUrl := AUrl;
   if (ARequestBody <> nil) then
-    LReqBytes := TEncoding.UTF8.GetBytes(ARequestBody.Encode)
+    LReqStr := ARequestBody.Encode
   else
-    LReqBytes := nil;
-  DoRequest(AMethod, AUrl, AHttpHeaders,
+    LReqStr := '';
+  LReqBytes := nil;
+
+  if LIsGetReq then
+  begin
+    if (LReqStr <> '') then
+      LUrl := LUrl + '?' + LReqStr;
+  end else
+  begin
+    LReqBytes := TEncoding.UTF8.GetBytes(LReqStr)
+  end;
+
+  DoRequest(AMethod, LUrl, AHttpHeaders,
     LReqBytes,
     AResponseStream,
     procedure(const ARequest: ICrossHttpClientRequest)
@@ -3339,7 +3500,8 @@ begin
       if Assigned(AInitProc) then
         AInitProc(ARequest);
 
-      ARequest.Header[HEADER_CONTENT_TYPE] := TMediaType.APPLICATION_FORM_URLENCODED_TYPE;
+      if not LIsGetReq and (ARequest.Header[HEADER_CONTENT_TYPE] = '') then
+        ARequest.Header[HEADER_CONTENT_TYPE] := TMediaType.APPLICATION_FORM_URLENCODED_TYPE;
     end,
     ACallback);
 end;
@@ -3412,6 +3574,16 @@ begin
   Result := FLocalPort;
 end;
 
+function TCrossHttpClient.GetVerifyPeer: Boolean;
+begin
+  _Lock;
+  try
+    Result := FVerifyPeer;
+  finally
+    _Unlock;
+  end;
+end;
+
 function TCrossHttpClient.GetMaxConnsPerServer: Integer;
 begin
   Result := FMaxConnsPerServer;
@@ -3469,6 +3641,21 @@ end;
 procedure TCrossHttpClient.SetLocalPort(const AValue: Word);
 begin
   FLocalPort := AValue;
+end;
+
+procedure TCrossHttpClient.SetVerifyPeer(const AValue: Boolean);
+begin
+  _Lock;
+  try
+    if AValue and (Length(FCACertificates) = 0) then
+      raise ECrossHttpClient.Create(
+        'At least one CA certificate is required before enabling peer verification.');
+    if FHttpsCli <> nil then
+      FHttpsCli.VerifyPeer := AValue;
+    FVerifyPeer := AValue;
+  finally
+    _Unlock;
+  end;
 end;
 
 procedure TCrossHttpClient.SetMaxCompressRatio(const AValue: Integer);
@@ -3672,20 +3859,8 @@ begin
   LIdleHttpConn := nil;
 
   // 优先使用空闲连接
-  // [PATCH-CSHTTP-3] except on a retry: the first attempt just failed on a
-  // stale pooled connection, and every other idle connection to this server
-  // is equally suspect (they all went idle around the same time — under a
-  // concurrent burst the server closes them together). A retry that grabbed
-  // another pooled connection was observed to fail again and exhaust its
-  // single retry. Force a FRESH connect instead — the same rule WinHTTP and
-  // curl apply.
-  if FClientSocket.FReUseConnection and (not LRequestObj.FRetried) then
+  if FClientSocket.FReUseConnection then
     LIdleHttpConn := GetIdleConnection;
-
-  // [PATCH-CSHTTP-3] record per dispatch attempt whether this request rides
-  // a reused pooled connection — only that path is exposed to the stale
-  // keep-alive race and eligible for a one-shot retry on failure
-  LRequestObj.FViaReusedConnection := (LIdleHttpConn <> nil);
 
   // 有空闲连接, 使用空闲连接处理请求
   if (LIdleHttpConn <> nil) then
