@@ -170,8 +170,8 @@ type
       const ASize: Integer); overload; override;
     procedure SetPrivateKey(const APKeyBuf: Pointer; const APKeyBufSize: Integer;
       const APassword: string); overload; override;
-
     { TLSOPT-2 (fork-only): override the TLS 1.2 cipher list via SSL_CTX_set_cipher_list. }
+    { Override the TLS 1.2 cipher list via SSL_CTX_set_cipher_list. }
     procedure SetCipherList(const ACipherList: string); override;
   end;
 
@@ -1180,6 +1180,24 @@ begin
   BeginTlsConfigUpdate;
   try
     TSSLTools.SetPrivateKey(FSslCtx, APKeyBuf, APKeyBufSize, APassword);
+  finally
+    EndTlsConfigUpdate;
+  end;
+end;
+
+procedure TCrossOpenSslSocket.SetCipherList(const ACipherList: string);
+var
+  LAnsi: AnsiString;
+begin
+  if not Ssl or (FSslCtx = nil) or (ACipherList = '') then Exit;
+
+  BeginTlsConfigUpdate;
+  try
+    LAnsi := AnsiString(ACipherList);
+    if SSL_CTX_set_cipher_list(FSslCtx, PAnsiChar(LAnsi)) <> 1 then
+      raise ESsl.Create(
+        'SetCipherList: SSL_CTX_set_cipher_list rejected "' + ACipherList +
+        '" (no matching ciphers)');
   finally
     EndTlsConfigUpdate;
   end;

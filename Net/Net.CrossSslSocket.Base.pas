@@ -410,6 +410,7 @@ begin
   end;
 end;
 
+
 procedure TCrossSslSocketBase.AddCACertificate(const ABuf: Pointer;
   const ASize: Integer);
 begin
