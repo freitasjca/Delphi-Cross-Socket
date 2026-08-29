@@ -283,6 +283,9 @@ type
       const APassword: string = ''); virtual;
 
     procedure SetVerifyPeer(const AValue: Boolean); virtual;
+    { TLSOPT-2 (fork-only): override negotiated cipher list (TLS 1.2 and below).
+      ACipherList is an OpenSSL cipher-list string. Empty = keep _InitSslCtx default. }
+    procedure SetCipherList(const ACipherList: string); virtual; abstract;
 
     property Ssl: Boolean read GetSsl;
     property VerifyPeer: Boolean read GetVerifyPeer write SetVerifyPeer;
@@ -406,6 +409,7 @@ begin
     EndTlsConfigUpdate;
   end;
 end;
+
 
 procedure TCrossSslSocketBase.AddCACertificate(const ABuf: Pointer;
   const ASize: Integer);
