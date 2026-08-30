@@ -1,6 +1,6 @@
 {
   "name": "delphi-cross-socket",
-  "description": "Delphi cross-platform async socket library (IOCP/epoll/kqueue) with HTTP server and OpenSSL 3.x support. Fork of winddriver/Delphi-Cross-Socket — adds SetCipherList (TLSOPT-2, PR #200) and stale keep-alive retry (PATCH-CSHTTP-3, PR #201)."  ",
+  "description": "Delphi cross-platform async socket library (IOCP/epoll/kqueue) with HTTP server and OpenSSL 3.x support. Fork of winddriver/Delphi-Cross-Socket — adds SetCipherList (TLSOPT-2, PR #200) and stale keep-alive retry (PATCH-CSHTTP-3, PR #201).",
   "version": "1.0.8",
   "homepage": "https://github.com/freitasjca/Delphi-Cross-Socket",
   "license": "MIT",
