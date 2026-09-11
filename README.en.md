@@ -51,7 +51,29 @@ Author: WiNDDRiVER(soulawing@gmail.com)
 - Before enabling peer verification, call `AddCACertificate` (repeated calls and PEM bundles are supported), then set `VerifyPeer := True`.
 - An mTLS server must set its certificate and private key. An mTLS client must also set its own certificate and private key before `Connect` or the first HTTPS request.
 - A verifying client checks both the server certificate chain and its DNS host name. System root stores are not loaded by this initial implementation.
-- Certificates, private keys, CAs, and `VerifyPeer` cannot be changed after the first SSL connection is created.
+- Certificates, private keys, CAs, `VerifyPeer`, and cipher suites cannot be changed after the first SSL connection is created.
+
+### TLS 1.2 / TLS 1.3 cipher suites
+
+The OpenSSL backend exposes two separate methods on `ICrossSslSocket`, for both clients and servers:
+
+The minimum protocol version is TLS 1.2. The component leaves the maximum version to the library and system configuration. Future protocol versions still require independent compatibility validation.
+
+```pascal
+LSocket.SetTls12CipherSuites('ECDHE-RSA-AES128-GCM-SHA256');
+LSocket.SetTls13CipherSuites('TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384');
+```
+
+- `SetTls12CipherSuites` accepts OpenSSL TLS 1.2 cipher rules. `SetTls13CipherSuites` accepts TLS 1.3 suite names separated by colons, in preference order.
+- New OpenSSL sockets use the public constants in `Net.CrossSslSocket.Types`: `DEFAULT_TLS12_CIPHER_SUITES` contains six ECDHE + AES-GCM/ChaCha20-Poly1305 suites for RSA/ECDSA certificates; `DEFAULT_TLS13_CIPHER_SUITES` contains AES-256-GCM, ChaCha20-Poly1305, and AES-128-GCM.
+- The defaults no longer include the previous `HIGH` expansion, CBC, finite-field DHE, or TLS 1.3 CCM/CCM_8. Endpoints requiring those suites need explicit configuration before the first SSL connection.
+- An empty string leaves the current configuration unchanged; it neither restores defaults nor disables a protocol. Pass the corresponding `DEFAULT_TLSxx_CIPHER_SUITES` constant to restore a suite list.
+- The lists are separate, but `@SECLEVEL` in TLS 1.2 rules changes the context-wide security level and can affect TLS 1.3 handshakes. Restoring a list or calling the TLS 1.3 setter does not reset that level.
+- Inputs follow native OpenSSL semantics. Unknown TLS 1.2 items may be ignored. Unknown TLS 1.3 names are rejected by OpenSSL 1.1.1 and may be ignored by 3.x. Both setters check the native result; failure raises `ESslContextInvalid` and invalidates the socket's entire TLS configuration. Recreate the socket after such a failure.
+- Finish configuration before creating SSL connections. Each setter takes the configuration lock; the pair is not an atomic transaction. SSL-disabled sockets perform no configuration. The mbedTLS backend explicitly rejects non-empty configuration for both methods.
+- Rebuild all consumers and derived interfaces, including DCU/PPU/BPL/DLL files, from the same source version after the `ICrossSslSocket` interface change. Mixing old and new binaries is unsupported. No configuration forwarding methods have been added to `ICrossHttpClient`.
+
+See [TlsCipherSuitesTests](Net/Tests/FPC/TlsCipherSuitesTests/README.md) for reproducible configuration and handshake tests.
 
 ## Features
 - Use different IO models for different platforms:

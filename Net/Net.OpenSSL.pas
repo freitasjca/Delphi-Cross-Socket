@@ -3603,6 +3603,23 @@ begin
   end;
 end;
 
+{$IFNDEF __SSL_STATIC__}
+var
+  RSA_pkey_ctx_ctrl_legacy: function(ctx: PEVP_PKEY_CTX;
+    optype, cmd, p1: Integer; p2: Pointer): Integer; cdecl;
+
+function EVP_PKEY_CTX_set_rsa_keygen_bits_legacy(ctx: PEVP_PKEY_CTX;
+  bits: Integer): Integer; cdecl;
+const
+  EVP_PKEY_OP_KEYGEN = 1 shl 2;
+  EVP_PKEY_CTRL_RSA_KEYGEN_BITS = $1000 + 3;
+begin
+  // OpenSSL 1.1.1 的 rsa.h 将此接口定义为宏，没有同名导出函数。
+  Result := RSA_pkey_ctx_ctrl_legacy(ctx, EVP_PKEY_OP_KEYGEN,
+    EVP_PKEY_CTRL_RSA_KEYGEN_BITS, bits, nil);
+end;
+{$ENDIF}
+
 class procedure TSSLTools.LoadSslLibs;
 {$IFNDEF __SSL_STATIC__}
 var
@@ -3803,7 +3820,12 @@ begin
 
     // OpenSSL 1.1 降级密钥生成
     @EVP_PKEY_keygen_init := GetSslLibProc(FCryptoLibHandle, 'EVP_PKEY_keygen_init');
-    @EVP_PKEY_CTX_set_rsa_keygen_bits := GetSslLibProc(FCryptoLibHandle, 'EVP_PKEY_CTX_set_rsa_keygen_bits');
+    @EVP_PKEY_CTX_set_rsa_keygen_bits := GetProc(FCryptoLibHandle, 'EVP_PKEY_CTX_set_rsa_keygen_bits');
+    if not Assigned(EVP_PKEY_CTX_set_rsa_keygen_bits) then
+    begin
+      @RSA_pkey_ctx_ctrl_legacy := GetSslLibProc(FCryptoLibHandle, 'RSA_pkey_ctx_ctrl');
+      EVP_PKEY_CTX_set_rsa_keygen_bits := EVP_PKEY_CTX_set_rsa_keygen_bits_legacy;
+    end;
     @EVP_PKEY_keygen := GetSslLibProc(FCryptoLibHandle, 'EVP_PKEY_keygen');
     @EVP_PKEY_CTX_free := GetSslLibProc(FCryptoLibHandle, 'EVP_PKEY_CTX_free');
   end;

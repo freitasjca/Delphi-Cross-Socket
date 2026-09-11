@@ -52,7 +52,7 @@ type
   ///   </list>
   ///   加密私钥密码当前由 OpenSSL 后端支持；内置 Mbed TLS 2.14.0
   ///   因安全原因会拒绝非空密码。
-  ///   首个 SSL 连接创建后，证书、私钥、CA 和 VerifyPeer 均不可再修改。
+  ///   首个 SSL 连接创建后，证书、私钥、CA、VerifyPeer 和加密套件均不可再修改。
   /// </remarks>
   ICrossSslSocket = interface(ICrossSocket)
   ['{32750F56-2824-4F5E-B556-1286DACE9188}']
@@ -196,6 +196,32 @@ type
       const APassword: string = '');
 
     /// <summary>
+    ///   配置 TLS 1.2 加密套件，使用 OpenSSL 规则表达式。
+    /// </summary>
+    /// <remarks>
+    ///   当前仅 OpenSSL 后端支持，使用 OpenSSL cipher-list 规则。
+    ///   必须在首个 SSL 连接创建前调用；空字符串不修改当前配置，
+    ///   也不会恢复默认配置。未启用 SSL 时不执行配置。
+    ///   未知规则项可能被 OpenSSL 忽略，仅无匹配套件等原生错误会失败。
+    ///   OpenSSL 原生更新失败后，此 socket 的 TLS 配置失效，必须重建对象。
+    ///   其他后端对非空配置明确抛出不支持异常。
+    ///   不直接修改 TLS 1.3 套件名单；规则中的 @SECLEVEL 可改变全局安全级别。
+    /// </remarks>
+    procedure SetTls12CipherSuites(const ACipherRules: string);
+
+    /// <summary>
+    ///   配置 TLS 1.3 加密套件，名称按优先顺序用冒号分隔。
+    /// </summary>
+    /// <remarks>
+    ///   当前仅 OpenSSL 后端支持。首次 SSL 连接创建后不能修改。
+    ///   空字符串不操作，不恢复默认配置，也不禁用 TLS 1.3。
+    ///   未知名称可能被忽略；不支持 TLS 1.2 的 HIGH、排除等规则语法。
+    ///   原生更新失败后整个 socket 的 TLS 配置失效，必须重建对象。
+    ///   不修改 TLS 1.2 名单，不重置全局安全级别。
+    /// </remarks>
+    procedure SetTls13CipherSuites(const ACipherSuites: string);
+
+    /// <summary>
     ///   是否已启用 SSL
     /// </summary>
     property Ssl: Boolean read GetSsl;
@@ -283,9 +309,25 @@ type
       const APassword: string = ''); virtual;
 
     procedure SetVerifyPeer(const AValue: Boolean); virtual;
-    { TLSOPT-2 (fork-only): override negotiated cipher list (TLS 1.2 and below).
-      ACipherList is an OpenSSL cipher-list string. Empty = keep _InitSslCtx default. }
-    procedure SetCipherList(const ACipherList: string); virtual; abstract;
+    procedure SetTls12CipherSuites(const ACipherRules: string); virtual;
+    procedure SetTls13CipherSuites(const ACipherSuites: string); virtual;
+
+    { TLSOPT-2 (fork-only, DEPRECATED) — delegates to SetTls12CipherSuites.
+
+      Superseded upstream by SetTls12CipherSuites/SetTls13CipherSuites
+      (winddriver bb85ab4, 2026-09-06); our PR #200 was closed in its favour
+      because one method cannot express both TLS versions. Retained ONLY
+      because horse-provider-crosssocket <= v1.0.22 calls it
+      (Horse.Provider.CrossSocket.Server.pas, THorseCrossSocketServer). Delete
+      once that provider migrates.
+
+      Deliberately no TLS 1.3 path: SSL_CTX_set_cipher_list does not configure
+      TLS 1.3 suites, so silently forwarding there would be wrong. Callers
+      wanting TLS 1.3 must use SetTls13CipherSuites.
+
+      Now `virtual` rather than `virtual; abstract;` — the body below delegates,
+      so descendants need no override and TCrossOpenSslSocket carries none. }
+    procedure SetCipherList(const ACipherList: string); virtual;
 
     property Ssl: Boolean read GetSsl;
     property VerifyPeer: Boolean read GetVerifyPeer write SetVerifyPeer;
@@ -410,6 +452,45 @@ begin
   end;
 end;
 
+procedure TCrossSslSocketBase.SetTls12CipherSuites(const ACipherRules: string);
+begin
+  if not Ssl or (ACipherRules = '') then Exit;
+
+  BeginTlsConfigUpdate;
+  try
+    raise ECrossSocket.CreateFmt(
+      '%s does not support TLS 1.2 cipher-suite configuration.',
+      [ClassName]);
+  finally
+    EndTlsConfigUpdate;
+  end;
+end;
+
+procedure TCrossSslSocketBase.SetTls13CipherSuites(const ACipherSuites: string);
+begin
+  if not Ssl or (ACipherSuites = '') then Exit;
+
+  BeginTlsConfigUpdate;
+  try
+    raise ECrossSocket.CreateFmt(
+      '%s does not support TLS 1.3 cipher-suite configuration.',
+      [ClassName]);
+  finally
+    EndTlsConfigUpdate;
+  end;
+end;
+
+{ TLSOPT-2 (fork-only, DEPRECATED) — see the declaration for why this still
+  exists. Delegation is a strict upgrade over the body it replaces: the old
+  fork implementation called SSL_CTX_set_cipher_list directly with no nil check
+  on FSslCtx, no ERR_clear_error() around the call, and no
+  InvalidateTlsConfiguration on failure — so a rejected cipher string left a
+  half-configured context that went on serving. Upstream's implementation does
+  all three, and callers of SetCipherList now inherit that. }
+procedure TCrossSslSocketBase.SetCipherList(const ACipherList: string);
+begin
+  SetTls12CipherSuites(ACipherList);
+end;
 
 procedure TCrossSslSocketBase.AddCACertificate(const ABuf: Pointer;
   const ASize: Integer);

@@ -7,6 +7,23 @@ interface
 uses
   SysUtils;
 
+const
+  // TLS 1.3：沿用 OpenSSL 1.1.1 的三项通用默认套件及顺序。
+  DEFAULT_TLS13_CIPHER_SUITES =
+    'TLS_AES_256_GCM_SHA384:' +
+    'TLS_CHACHA20_POLY1305_SHA256:' +
+    'TLS_AES_128_GCM_SHA256';
+
+  // TLS 1.2：仅使用 ECDHE + AEAD，兼容 RSA 和 ECDSA 证书。
+  // AES-128-GCM 优先；保留 ChaCha20-Poly1305 和 AES-256-GCM。
+  DEFAULT_TLS12_CIPHER_SUITES =
+    'ECDHE-RSA-AES128-GCM-SHA256:' +
+    'ECDHE-ECDSA-AES128-GCM-SHA256:' +
+    'ECDHE-RSA-CHACHA20-POLY1305:' +
+    'ECDHE-ECDSA-CHACHA20-POLY1305:' +
+    'ECDHE-RSA-AES256-GCM-SHA384:' +
+    'ECDHE-ECDSA-AES256-GCM-SHA384';
+
 type
   // 名称-数据结构体
   TEntryData = record

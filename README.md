@@ -51,7 +51,29 @@
 - 启用对端验证前，先调用 `AddCACertificate`（可多次调用或传入 PEM bundle），再设置 `VerifyPeer := True`。
 - mTLS 服务端还需调用 `SetCertificate`、`SetPrivateKey`；mTLS 客户端同样需要在 `Connect` 或首次 HTTPS 请求前设置自己的证书和私钥。
 - 客户端启用验证后会同时验证服务端证书链和 DNS 主机名；初版不加载系统根证书库。
-- 首个 SSL 连接创建后，不再允许修改证书、私钥、CA 或 `VerifyPeer`。
+- 首个 SSL 连接创建后，不再允许修改证书、私钥、CA、`VerifyPeer` 或加密套件。
+
+### TLS 1.2 / TLS 1.3 加密套件
+
+OpenSSL 后端支持两个独立配置入口，客户端和服务端均通过 `ICrossSslSocket` 使用：
+
+最低协议版本为 TLS 1.2；组件不固定最高版本，沿用运行库及系统配置的上限。未来协议版本仍需独立验证，不能仅凭取消上限视为已完成适配。
+
+```pascal
+LSocket.SetTls12CipherSuites('ECDHE-RSA-AES128-GCM-SHA256');
+LSocket.SetTls13CipherSuites('TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384');
+```
+
+- `SetTls12CipherSuites` 接受 OpenSSL TLS 1.2 规则；`SetTls13CipherSuites` 接受冒号分隔、按优先顺序排列的 TLS 1.3 套件名称。
+- 构造时默认使用 `Net.CrossSslSocket.Types` 中的 `DEFAULT_TLS12_CIPHER_SUITES`（ECDHE + AES-GCM/ChaCha20-Poly1305，RSA/ECDSA 共六项）和 `DEFAULT_TLS13_CIPHER_SUITES`（AES-256-GCM、ChaCha20-Poly1305、AES-128-GCM 三项）。
+- 新默认不再包含原先的 `HIGH` 扩展、CBC、有限域 DHE 和 TLS 1.3 CCM/CCM_8。仅支持这些套件的端点需要调用方在首次连接前显式配置。
+- 空字符串表示不修改当前配置，不恢复默认值，也不禁用协议。恢复某一版本的默认名单时，显式传入对应的 `DEFAULT_TLSxx_CIPHER_SUITES` 常量。
+- 名单分别配置，但 TLS 1.2 规则中的 `@SECLEVEL` 会改变整个上下文的安全级别，可能影响 TLS 1.3 握手；恢复名单或调用 TLS 1.3 setter 都不会重置该级别。
+- 输入按 OpenSSL 原生规则处理。TLS 1.2 未知项可能被忽略；TLS 1.3 的未知名称在 OpenSSL 1.1.1 中会被拒绝，在 3.x 中可能被忽略。两个 setter 都检查原生返回值，失败后抛 `ESslContextInvalid` 并使整个 socket 的 TLS 配置失效，必须重建对象。
+- 必须完成全部配置后再创建 SSL 连接。两个 setter 分别加锁，不提供双版本配置的事务提交。未启用 SSL 时不执行配置；mbedTLS 对两个方法的非空配置明确报告不支持。
+- `ICrossSslSocket` 新增方法后，使用者和派生接口所在的 DCU/PPU/BPL/DLL 必须从同一版本源码全量重编译，不支持新旧二进制混用。此处没有增加 `ICrossHttpClient` 的配置转发接口。
+
+可复现的配置和真实握手测试见 [TlsCipherSuitesTests](Net/Tests/FPC/TlsCipherSuitesTests/README.md)。
 
 ## 特性
 

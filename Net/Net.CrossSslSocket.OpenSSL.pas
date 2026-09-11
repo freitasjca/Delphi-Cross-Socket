@@ -170,11 +170,19 @@ type
       const ASize: Integer); overload; override;
     procedure SetPrivateKey(const APKeyBuf: Pointer; const APKeyBufSize: Integer;
       const APassword: string); overload; override;
-    { Override the TLS 1.2 cipher list via SSL_CTX_set_cipher_list. }
-    procedure SetCipherList(const ACipherList: string); override;
+    procedure SetTls12CipherSuites(const ACipherRules: string); override;
+    procedure SetTls13CipherSuites(const ACipherSuites: string); override;
   end;
 
 {$IFDEF CROSS_OPENSSL_SELFTEST}
+function CrossOpenSslSelfTest_GetCipherList(
+  const ASocket: TCrossOpenSslSocket): TArray<string>;
+function CrossOpenSslSelfTest_GetSecurityLevel(
+  const ASocket: TCrossOpenSslSocket): Integer;
+procedure CrossOpenSslSelfTest_GetProtocolVersions(
+  const ASocket: TCrossOpenSslSocket; out AMinVersion, AMaxVersion: Integer);
+function CrossOpenSslSelfTest_GetNegotiatedCipher(
+  const AConnection: ICrossConnection; out AVersion, ACipher: string): Boolean;
 function CrossOpenSslSelfTest_PendingCallbackExceptionDoesNotStall(
   out AErrMsg: string): Boolean;
 function CrossOpenSslSelfTest_HandshakeSendFailureDoesNotPromote(
@@ -196,6 +204,69 @@ const
   MAX_HANDSHAKE_RECV_BYTES = 128 * 1024;
 
 {$IFDEF CROSS_OPENSSL_SELFTEST}
+function CrossOpenSslSelfTest_GetCipherList(
+  const ASocket: TCrossOpenSslSocket): TArray<string>;
+var
+  LSsl: PSSL;
+begin
+  // 仅供首次连接前的配置测试使用；不对生产代码公开上下文指针。
+  ASocket.BeginTlsConfigUpdate;
+  try
+    ERR_clear_error();
+    LSsl := SSL_new(ASocket.FSslCtx);
+    if LSsl = nil then
+      raise ESsl.CreateFmt('SSL_new failed in cipher test: %s',
+        [GetOpenSslErrors]);
+    try
+      Result := TSSLTools.GetCipherList(LSsl);
+    finally
+      SSL_free(LSsl);
+      ERR_clear_error();
+    end;
+  finally
+    ASocket.EndTlsConfigUpdate;
+  end;
+end;
+
+function CrossOpenSslSelfTest_GetSecurityLevel(
+  const ASocket: TCrossOpenSslSocket): Integer;
+begin
+  ASocket.BeginTlsConfigUpdate;
+  try
+    Result := SSL_CTX_get_security_level(ASocket.FSslCtx);
+  finally
+    ASocket.EndTlsConfigUpdate;
+  end;
+end;
+
+procedure CrossOpenSslSelfTest_GetProtocolVersions(
+  const ASocket: TCrossOpenSslSocket; out AMinVersion, AMaxVersion: Integer);
+begin
+  ASocket.BeginTlsConfigUpdate;
+  try
+    AMinVersion := SSL_CTX_get_min_proto_version(ASocket.FSslCtx);
+    AMaxVersion := SSL_CTX_get_max_proto_version(ASocket.FSslCtx);
+  finally
+    ASocket.EndTlsConfigUpdate;
+  end;
+end;
+
+function CrossOpenSslSelfTest_GetNegotiatedCipher(
+  const AConnection: ICrossConnection; out AVersion, ACipher: string): Boolean;
+var
+  LConnection: TCrossOpenSslConnection;
+begin
+  AVersion := '';
+  ACipher := '';
+  LConnection := AConnection as TCrossOpenSslConnection;
+  Result := (LConnection.FSslData <> nil) and
+    (SSL_is_init_finished(LConnection.FSslData) = 1);
+  if not Result then Exit;
+  // 只观测本次测试所需的协商结果，不解析证书或临时密钥。
+  AVersion := UTF8ToString(SSL_get_version(LConnection.FSslData));
+  ACipher := UTF8ToString(SSL_get_cipher_name(LConnection.FSslData));
+end;
+
 function CrossOpenSslSelfTest_PendingCallbackExceptionDoesNotStall(
   out AErrMsg: string): Boolean;
 var
@@ -984,8 +1055,11 @@ begin
   // 这里使用 TLS_method(), 该方法会让程序自动协商使用能支持的最高版本 TLS
   FSslCtx := TSSLTools.NewCTX(TLS_method());
 
-  SSL_CTX_set_min_proto_version(FSslCtx, TLS1_2_VERSION);
-  SSL_CTX_set_max_proto_version(FSslCtx, TLS1_3_VERSION);
+  // 限制最低版本，最高版本沿用运行库及系统配置。
+  ERR_clear_error();
+  if SSL_CTX_set_min_proto_version(FSslCtx, TLS1_2_VERSION) <> 1 then
+    raise ESsl.CreateFmt('Failed to set minimum TLS version: %s.',
+      [GetOpenSslErrors]);
 
   // 设置证书验证方式
   // SSL_VERIFY_NONE 不进行证书验证，即不验证服务器的证书
@@ -1018,43 +1092,8 @@ begin
 
   SSL_CTX_set_options(FSslCtx, LOptions);
 
-  {$region '采用新型加密套件进行加密'}
-  // TLSv1.3及以上加密套件设置(OpenSSL 1.1.1+)
-  SSL_CTX_set_ciphersuites(FSslCtx,
-    'TLS_AES_256_GCM_SHA384' +
-    ':TLS_CHACHA20_POLY1305_SHA256' +
-    ':TLS_AES_128_GCM_SHA256' +
-    ':TLS_AES_128_CCM_SHA256' +
-    ':TLS_AES_128_CCM_8_SHA256'
-  );
-
-  // TLS 1.2及以下加密套件设置
-  SSL_CTX_set_cipher_list(FSslCtx,
-    // from nodejs(node_constants.h)
-    // #define DEFAULT_CIPHER_LIST_CORE
-    'ECDHE-RSA-AES128-GCM-SHA256:' +
-    'ECDHE-ECDSA-AES128-GCM-SHA256:' +
-    'ECDHE-RSA-AES256-GCM-SHA384:' +
-    'ECDHE-ECDSA-AES256-GCM-SHA384:' +
-    'DHE-RSA-AES128-GCM-SHA256:' +
-    'ECDHE-RSA-AES128-SHA256:' +
-    'DHE-RSA-AES128-SHA256:' +
-    'ECDHE-RSA-AES256-SHA384:' +
-    'DHE-RSA-AES256-SHA384:' +
-    'ECDHE-RSA-AES256-SHA256:' +
-    'DHE-RSA-AES256-SHA256:' +
-    'HIGH:' +
-    '!aNULL:' +
-    '!eNULL:' +
-    '!EXPORT:' +
-    '!DES:' +
-    '!RC4:' +
-    '!MD5:' +
-    '!PSK:' +
-    '!SRP:' +
-    '!CAMELLIA'
-  );
-  {$endregion}
+  SetTls13CipherSuites(DEFAULT_TLS13_CIPHER_SUITES);
+  SetTls12CipherSuites(DEFAULT_TLS12_CIPHER_SUITES);
 end;
 
 procedure TCrossOpenSslSocket._Connected(const AConnection: ICrossConnection);
@@ -1172,19 +1211,73 @@ begin
   end;
 end;
 
-procedure TCrossOpenSslSocket.SetCipherList(const ACipherList: string);
+procedure TCrossOpenSslSocket.SetTls12CipherSuites(const ACipherRules: string);
 var
   LAnsi: AnsiString;
+  LError: string;
 begin
-  if not Ssl or (FSslCtx = nil) or (ACipherList = '') then Exit;
+  if not Ssl or (ACipherRules = '') then Exit;
 
   BeginTlsConfigUpdate;
   try
-    LAnsi := AnsiString(ACipherList);
-    if SSL_CTX_set_cipher_list(FSslCtx, PAnsiChar(LAnsi)) <> 1 then
-      raise ESsl.Create(
-        'SetCipherList: SSL_CTX_set_cipher_list rejected "' + ACipherList +
-        '" (no matching ciphers)');
+    if FSslCtx = nil then
+    begin
+      InvalidateTlsConfiguration;
+      raise ESslContextInvalid.Create('SetTls12CipherSuites: SSL context is nil.');
+    end;
+
+    LAnsi := AnsiString(ACipherRules);
+    ERR_clear_error();
+    try
+      if SSL_CTX_set_cipher_list(FSslCtx, PAnsiChar(LAnsi)) <> 1 then
+      begin
+        // 原生 API 可能已改变名单或安全级别，失败后禁止继续创建连接。
+        InvalidateTlsConfiguration;
+        LError := GetOpenSslErrors;
+        raise ESslContextInvalid.CreateFmt(
+          'SetTls12CipherSuites failed; recreate the socket before using TLS: %s.',
+          [LError]);
+      end;
+    finally
+      // 清理本次调用的错误状态，避免污染同线程后续 OpenSSL 操作。
+      ERR_clear_error();
+    end;
+  finally
+    EndTlsConfigUpdate;
+  end;
+end;
+
+procedure TCrossOpenSslSocket.SetTls13CipherSuites(const ACipherSuites: string);
+var
+  LAnsi: AnsiString;
+  LError: string;
+begin
+  // 明确选择空串不操作，不使用原生 API 的空列表语义。
+  if not Ssl or (ACipherSuites = '') then Exit;
+
+  BeginTlsConfigUpdate;
+  try
+    if FSslCtx = nil then
+    begin
+      InvalidateTlsConfiguration;
+      raise ESslContextInvalid.Create('SetTls13CipherSuites: SSL context is nil.');
+    end;
+
+    LAnsi := AnsiString(ACipherSuites);
+    ERR_clear_error();
+    try
+      if SSL_CTX_set_ciphersuites(FSslCtx, PAnsiChar(LAnsi)) <> 1 then
+      begin
+        // 两版本统一采用原生更新失败后重建对象的保守契约。
+        InvalidateTlsConfiguration;
+        LError := GetOpenSslErrors;
+        raise ESslContextInvalid.CreateFmt(
+          'SetTls13CipherSuites failed; recreate the socket before using TLS: %s.',
+          [LError]);
+      end;
+    finally
+      ERR_clear_error();
+    end;
   finally
     EndTlsConfigUpdate;
   end;
