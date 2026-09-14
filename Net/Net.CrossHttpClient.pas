@@ -2516,12 +2516,16 @@ begin
   end;
 
   // HEAD 请求不应包含请求体 (RFC 7231 §4.3.2)
-  if LMethodIsHead then
-  begin
-    _SocketSend(AHeaderSource, ASendCb);
-    Exit;
-  end;
-
+  // [FIX-HEAD-LOOP-2] Client mirror of the server's FIX-HEAD-LOOP-1. The header
+  // source rebuilds the header on every call and never returns False, and
+  // _SocketSend calls the source again after each completed SendBuf. HEAD used
+  // to pass AHeaderSource on its own, so the request header was resent until
+  // the connection went away: the server parsed dozens of duplicate HEAD
+  // requests (a 15747-byte read = 87 x 181-byte header), and when the client
+  // moved on, a server pipeline still running one of them read a connection
+  // that InternalClose had already cleared. The one-shot wrapper below is what
+  // ends the header, so HEAD now goes through it and stops there instead of
+  // calling ABodySource.
   LHeaderDone := False;
 
   _SocketSend(
@@ -2532,6 +2536,9 @@ begin
         LHeaderDone := True;
         Result := Assigned(AHeaderSource) and AHeaderSource(AData, ADataSize);
       end else
+      if LMethodIsHead then
+        Result := False
+      else
       begin
         Result := Assigned(ABodySource) and ABodySource(AData, ADataSize);
       end;
