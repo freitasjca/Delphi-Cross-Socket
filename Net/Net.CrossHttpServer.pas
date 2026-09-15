@@ -83,7 +83,9 @@ type
     function GetPending: Integer;
 
     /// <summary>
-    ///   请求对象
+    ///   最近一次解析完成的请求；首次完整请求前为 nil。
+    ///   WebSocket 升级后保留握手请求，关闭后仍可读取请求数据。
+    ///   遍历时应先保存此接口，再通过保存的引用访问请求。
     /// </summary>
     property Request: ICrossHttpRequest read GetRequest;
 
@@ -1755,6 +1757,11 @@ type
     FServer: TCrossHttpServer;
     FRequestObj: TCrossHttpRequest;
     FRequest: ICrossHttpRequest;
+    // 对外保留最近完整请求，不随下一请求的解析状态变化。
+    FLastRequest: ICrossHttpRequest;
+    FLastRequestLock: ILock;
+    // 与 FLastRequest 共用锁，关闭后禁止再次发布请求。
+    FRequestClosed: Boolean;
     FResponseObj: TCrossHttpResponse;
     FResponse: ICrossHttpResponse;
     FHttpParser: ICrossHttpParser;
@@ -1807,8 +1814,8 @@ type
     procedure ReleaseRequest; virtual;
     procedure ReleaseResponse; virtual;
 
-    // socket 关闭时主动打破 connection 与 request/response 之间的循环引用,
-    // 并清空响应队列, 避免连接关闭后 connection 因循环引用永不释放导致内存泄漏
+    // socket 关闭时解除请求/响应对连接的反向引用并清空响应队列，
+    // 保留最近完整请求的数据，直到连接析构。
     procedure InternalClose; override;
   public
     constructor Create(const AOwner: TCrossSocketBase; const AClientSocket: TSocket;
@@ -2499,6 +2506,9 @@ constructor TCrossHttpConnection.Create(const AOwner: TCrossSocketBase;
 begin
   inherited Create(AOwner, AClientSocket, AConnectType, AHost, AConnectCb);
 
+  FLastRequestLock := TLock.Create;
+  FRequestClosed := False;
+
   FServer := AOwner as TCrossHttpServer;
 
   FResponseQueue := TList<IHttpResponseQueueItem>.Create;
@@ -2520,6 +2530,13 @@ end;
 
 destructor TCrossHttpConnection.Destroy;
 begin
+  if (FLastRequest <> nil) then
+  begin
+    (FLastRequest as TCrossHttpRequest).FConnectionObj := nil;
+    (FLastRequest as TCrossHttpRequest).FConnection := nil;
+  end;
+  FLastRequest := nil;
+
   if (FRequest <> nil) then
     (FRequest as TCrossHttpRequest).FConnection := nil;
 
@@ -2535,13 +2552,20 @@ begin
   FResponseQueueLock := nil;
 
   FHttpParser := nil;
+  FLastRequestLock := nil;
 
   inherited;
 end;
 
 function TCrossHttpConnection.GetRequest: ICrossHttpRequest;
 begin
-  Result := FRequest;
+  FLastRequestLock.Enter;
+  try
+    // 锁内取得强引用，离开锁后请求对象仍然存活。
+    Result := FLastRequest;
+  finally
+    FLastRequestLock.Leave;
+  end;
 end;
 
 function TCrossHttpConnection.GetResponse: ICrossHttpResponse;
@@ -2583,13 +2607,34 @@ begin
 end;
 
 procedure TCrossHttpConnection.InternalClose;
+var
+  LLastRequest: ICrossHttpRequest;
+  LRequestObj: TCrossHttpRequest;
 begin
-  // 必须在 socket 关闭时主动断开连接级 FRequest/FResponse 与 request.FConnection /
-  // response.FConnection 之间的循环引用. 否则 connection.FRequest 持有 request, 而
-  // request.FConnection 又持有 connection, refcount 永不归零, 不仅 connection 不会
-  // 销毁, 队列内 item / request body / response header 等也全部泄漏.
+  FLastRequestLock.Enter;
+  try
+    // 先禁止发布，再清理解析字段；与 _OnParseSuccess 捕获接口互斥。
+    FRequestClosed := True;
+    LLastRequest := FLastRequest;
+  finally
+    FLastRequestLock.Leave;
+  end;
+
+  // 保留完整请求数据，解除它对连接的反向引用以打破循环引用。
+  if (LLastRequest <> nil) then
+  begin
+    LRequestObj := LLastRequest as TCrossHttpRequest;
+    LRequestObj.FConnectionObj := nil;
+    LRequestObj.FConnection := nil;
+  end;
+
+  // 下一请求尚未完成时，当前解析请求与最近完整请求可能不同。
   if (FRequest <> nil) then
-    (FRequest as TCrossHttpRequest).FConnection := nil;
+  begin
+    LRequestObj := FRequest as TCrossHttpRequest;
+    LRequestObj.FConnectionObj := nil;
+    LRequestObj.FConnection := nil;
+  end;
   if (FResponse <> nil) then
     (FResponse as TCrossHttpResponse).FConnection := nil;
   ReleaseRequest;
@@ -3031,18 +3076,29 @@ end;
 procedure TCrossHttpConnection._OnParseSuccess;
 var
   LConnection: ICrossHttpConnection;
-  LRequest: ICrossHttpRequest;
+  LRequest, LOldRequest: ICrossHttpRequest;
   LResponse: ICrossHttpResponse;
 begin
   LConnection := Self;
-  // 这里是 _LockRecv 保护下的同步调用, FRequest/FResponse 此刻仍是
-  // _OnParseBegin 刚写入的当前 parse item 的 request/response.
-  // 显式捕获为局部接口引用的真正意义在于: 一旦后续业务释放锁
-  // (如未来调整架构则业务可能在锁外运行) 或 _OnParseBegin 重新写入
-  // 连接级字段, 本局部变量仍以接口引用计数保证当前请求/响应对象存活,
-  // 不会读到错位对象。对象生命周期本质上由接口引用计数保证, 与锁无关
-  LRequest := FRequest;
-  LResponse := FResponse;
+
+  FLastRequestLock.Enter;
+  try
+    // InternalClose 必须先设置标记，再清理解析字段。
+    if FRequestClosed then Exit;
+
+    LRequest := FRequest;
+    LResponse := FResponse;
+
+    // 先保留旧接口，避免替换时在锁内析构旧请求。
+    LOldRequest := FLastRequest;
+    FLastRequest := LRequest;
+  finally
+    FLastRequestLock.Leave;
+  end;
+
+  LOldRequest := nil;
+
+  // 业务事件在发布锁外执行，参数始终绑定本次完整请求。
   FServer.DoOnRequestBegin(LConnection, LRequest, LResponse);
   FServer.DoOnRequest(LConnection, LRequest, LResponse);
 end;

@@ -289,9 +289,7 @@ type
     procedure _RespondPong(const AData: TBytes);
     procedure _RespondClose;
   protected
-    procedure InternalClose; override;
     procedure ParseRecvData(var ABuf: Pointer; var ALen: Integer); override;
-    procedure ReleaseRequest; override;
   public
     constructor Create(const AOwner: TCrossSocketBase; const AClientSocket: TSocket;
       const AConnectType: TConnectType; const AHost: string;
@@ -456,13 +454,6 @@ begin
   inherited;
 end;
 
-procedure TCrossWebSocketConnection.InternalClose;
-begin
-  if FIsWebSocket then
-    inherited ReleaseRequest;
-  inherited InternalClose;
-end;
-
 function TCrossWebSocketConnection.IsWebSocket: Boolean;
 begin
   Result := FIsWebSocket;
@@ -479,12 +470,6 @@ begin
     if (ALen > 0) and FIsWebSocket then
       _WebSocketRecv(ABuf, ALen);
   end;
-end;
-
-procedure TCrossWebSocketConnection.ReleaseRequest;
-begin
-  if not FIsWebSocket then
-    inherited ReleaseRequest;
 end;
 
 procedure TCrossWebSocketConnection.WsSend(const AData: Pointer;
