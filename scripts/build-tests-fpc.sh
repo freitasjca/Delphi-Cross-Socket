@@ -192,8 +192,8 @@ done
 echo "════════════════════════════════════════════════════════════"
 if [[ $FAILED -eq 0 ]]; then
   echo " both DCS unit suites OK — necessary, NOT sufficient."
-  echo " Still untested by this script: TLS, mTLS, and the"
-  echo " PATCH-CSHTTP-3 client retry. See BUILDING-FPC.md."
+  echo " Still untested by this script: TLS and mTLS."
+  echo " See BUILDING-FPC.md."
   exit 0
 fi
 echo " $FAILED suite(s) failed — do not fast-forward master."
