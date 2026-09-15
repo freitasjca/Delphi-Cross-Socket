@@ -1,7 +1,7 @@
 {
   "name": "delphi-cross-socket",
   "description": "Delphi cross-platform async socket library (IOCP/epoll/kqueue) with HTTP server and OpenSSL 3.x support. Fork of winddriver/Delphi-Cross-Socket — adds a Boss manifest, the vendored CnPack subset, the HEAD resend-loop fix (FIX-HEAD-LOOP-1/2, issue #203) and SetCipherList as a deprecated delegation to SetTls12CipherSuites.",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "homepage": "https://github.com/freitasjca/Delphi-Cross-Socket",
   "license": "MIT",
   "mainsrc": ".",
