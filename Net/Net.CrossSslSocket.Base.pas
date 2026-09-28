@@ -312,23 +312,6 @@ type
     procedure SetTls12CipherSuites(const ACipherRules: string); virtual;
     procedure SetTls13CipherSuites(const ACipherSuites: string); virtual;
 
-    { TLSOPT-2 (fork-only, DEPRECATED) — delegates to SetTls12CipherSuites.
-
-      Superseded upstream by SetTls12CipherSuites/SetTls13CipherSuites
-      (winddriver bb85ab4, 2026-09-06); our PR #200 was closed in its favour
-      because one method cannot express both TLS versions. Retained ONLY
-      because horse-provider-crosssocket <= v1.0.22 calls it
-      (Horse.Provider.CrossSocket.Server.pas, THorseCrossSocketServer). Delete
-      once that provider migrates.
-
-      Deliberately no TLS 1.3 path: SSL_CTX_set_cipher_list does not configure
-      TLS 1.3 suites, so silently forwarding there would be wrong. Callers
-      wanting TLS 1.3 must use SetTls13CipherSuites.
-
-      Now `virtual` rather than `virtual; abstract;` — the body below delegates,
-      so descendants need no override and TCrossOpenSslSocket carries none. }
-    procedure SetCipherList(const ACipherList: string); virtual;
-
     property Ssl: Boolean read GetSsl;
     property VerifyPeer: Boolean read GetVerifyPeer write SetVerifyPeer;
     property SslMaxPendingWriteBytes: Int64 read GetSslMaxPendingWriteBytes write SetSslMaxPendingWriteBytes;
@@ -478,18 +461,6 @@ begin
   finally
     EndTlsConfigUpdate;
   end;
-end;
-
-{ TLSOPT-2 (fork-only, DEPRECATED) — see the declaration for why this still
-  exists. Delegation is a strict upgrade over the body it replaces: the old
-  fork implementation called SSL_CTX_set_cipher_list directly with no nil check
-  on FSslCtx, no ERR_clear_error() around the call, and no
-  InvalidateTlsConfiguration on failure — so a rejected cipher string left a
-  half-configured context that went on serving. Upstream's implementation does
-  all three, and callers of SetCipherList now inherit that. }
-procedure TCrossSslSocketBase.SetCipherList(const ACipherList: string);
-begin
-  SetTls12CipherSuites(ACipherList);
 end;
 
 procedure TCrossSslSocketBase.AddCACertificate(const ABuf: Pointer;
