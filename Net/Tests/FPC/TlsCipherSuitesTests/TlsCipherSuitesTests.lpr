@@ -108,6 +108,8 @@ begin
   LApi.SetTls12CipherSuites('UNKNOWN');
   LApi.SetTls13CipherSuites('');
   LApi.SetTls13CipherSuites('UNKNOWN');
+  LApi.SetMinTlsVersion(tmvTls12);
+  LApi.SetMinTlsVersion(tmvTls13);
   LApi := nil;
 end;
 
@@ -125,6 +127,13 @@ begin
   ExpectError(ECrossSocket,
     procedure begin LApi.SetTls13CipherSuites(DEFAULT_TLS13_CIPHER_SUITES); end,
     '基类未明确拒绝 TLS 1.3 配置');
+  // 未实现该配置的后端不能承诺最低版本已生效。
+  ExpectError(ECrossSocket,
+    procedure begin LApi.SetMinTlsVersion(tmvTls12); end,
+    '基类静默接受了未实现的 TLS 1.2 最低版本');
+  ExpectError(ECrossSocket,
+    procedure begin LApi.SetMinTlsVersion(tmvTls13); end,
+    '基类未明确拒绝 TLS 1.3 最低版本');
   LApi := nil;
 end;
 
@@ -353,6 +362,49 @@ begin
   end;
 end;
 
+procedure TestMinTlsVersion;
+var
+  LObj: TTestSslSocket;
+  LApi: ICrossSslSocket;
+  LBefore, LAfter: TArray<string>;
+  LMinVersion, LMaxVersion, LMaxBefore: Integer;
+begin
+  LObj := TTestSslSocket.Create(0, True);
+  LApi := LObj;
+  try
+    CrossOpenSslSelfTest_GetProtocolVersions(LObj, LMinVersion, LMaxBefore);
+    Check(LMinVersion = TLS1_2_VERSION, '默认最低版本不是 TLS 1.2');
+    LBefore := CrossOpenSslSelfTest_GetCipherList(LObj);
+
+    LApi.SetMinTlsVersion(tmvTls13);
+    CrossOpenSslSelfTest_GetProtocolVersions(LObj, LMinVersion, LMaxVersion);
+    Check(LMinVersion = TLS1_3_VERSION, 'TLS 1.3 最低版本未生效');
+    Check(LMaxVersion = LMaxBefore, '设置最低版本改变了协议上限');
+    LAfter := CrossOpenSslSelfTest_GetCipherList(LObj);
+    Check(CipherText(LAfter, False) = CipherText(LBefore, False),
+      '设置最低版本改变了 TLS 1.2 名单');
+    Check(CipherText(LAfter, True) = CipherText(LBefore, True),
+      '设置最低版本改变了 TLS 1.3 名单');
+    Check(ERR_get_error() = 0, '最低版本成功路径遗留错误');
+
+    // 可恢复默认下限。
+    LApi.SetMinTlsVersion(tmvTls12);
+    CrossOpenSslSelfTest_GetProtocolVersions(LObj, LMinVersion, LMaxVersion);
+    Check(LMinVersion = TLS1_2_VERSION, '无法恢复 TLS 1.2 最低版本');
+
+    // 首个连接后配置锁定。
+    LObj.FreezeConfiguration;
+    ExpectError(ECrossSocket,
+      procedure begin LApi.SetMinTlsVersion(tmvTls13); end,
+      '配置锁定后仍可修改最低版本');
+    ExpectError(ECrossSocket,
+      procedure begin LApi.SetMinTlsVersion(tmvTls12); end,
+      '配置锁定后仍可恢复最低版本');
+  finally
+    LApi := nil;
+  end;
+end;
+
 procedure TestSecurityLevel;
 var
   LObj: TTestSslSocket;
@@ -499,6 +551,49 @@ begin
   end;
 end;
 
+function IgnoreMinimumVersion(AContext: PSSL_CTX; ACmd: Integer;
+  ALArg: NativeInt; APArg: Pointer): NativeInt; cdecl;
+begin
+  // 报告成功但不生效，验证 setter 的回读确认。
+  if ACmd = SSL_CTRL_SET_MIN_PROTO_VERSION then Exit(1);
+  Result := OriginalContextCtrl(AContext, ACmd, ALArg, APArg);
+end;
+
+procedure TestMinTlsVersionSetterFailure(const ASilent: Boolean);
+var
+  LObj: TTestSslSocket;
+  LApi: ICrossSslSocket;
+begin
+  // 构造完成后再替换，只影响 setter 本身。
+  LObj := TTestSslSocket.Create(0, True);
+  LApi := LObj;
+  OriginalContextCtrl := SSL_CTX_ctrl;
+  if ASilent then SSL_CTX_ctrl := IgnoreMinimumVersion
+  else SSL_CTX_ctrl := RejectMinimumVersion;
+  try
+    ExpectError(ESslContextInvalid,
+      procedure begin LApi.SetMinTlsVersion(tmvTls13); end,
+      '最低版本设置失败或未生效却未报错');
+  finally
+    SSL_CTX_ctrl := OriginalContextCtrl;
+  end;
+  try
+    Check(ERR_get_error() = 0, '最低版本失败路径遗留错误');
+    // 失败后整个 TLS 配置失效。
+    ExpectError(ECrossSocket,
+      procedure begin LApi.SetMinTlsVersion(tmvTls12); end,
+      '最低版本失败后配置未失效');
+    ExpectError(ECrossSocket,
+      procedure begin LObj.CreateSslConnection(ctConnect); end,
+      '最低版本失效后仍能构造客户端 SSL 连接');
+    ExpectError(ECrossSocket,
+      procedure begin LObj.CreateSslConnection(ctAccept); end,
+      '最低版本失效后仍能构造服务端 SSL 连接');
+  finally
+    LApi := nil;
+  end;
+end;
+
 procedure TestExistingSelfTests;
 var
   LError: string;
@@ -531,10 +626,16 @@ end;
 {$ELSE}
 procedure TestUnsupportedBackend;
 var
+  LObj: TTestSslSocket;
   LApi: ICrossSslSocket;
+  LClientVersion, LServerVersion: Integer;
 begin
-  LApi := TTestSslSocket.Create(0, True);
+  LObj := TTestSslSocket.Create(0, True);
+  LApi := LObj;
   try
+    CrossMbedTlsSelfTest_GetMinProtocolVersions(LObj, LClientVersion, LServerVersion);
+    Check((LClientVersion = $0303) and (LServerVersion = $0303),
+      'mbedTLS 客户端或服务端默认最低版本不是 TLS 1.2');
     LApi.SetTls12CipherSuites('');
     ExpectError(ECrossSocket,
       procedure begin LApi.SetTls12CipherSuites('HIGH'); end,
@@ -544,6 +645,19 @@ begin
       'mbedTLS 未明确拒绝 TLS 1.3 配置');
     LApi.SetTls12CipherSuites('');
     LApi.SetTls13CipherSuites('');
+    LApi.SetMinTlsVersion(tmvTls12);
+    CrossMbedTlsSelfTest_GetMinProtocolVersions(LObj, LClientVersion, LServerVersion);
+    Check((LClientVersion = $0303) and (LServerVersion = $0303),
+      'mbedTLS 客户端或服务端未应用 TLS 1.2 下限');
+    ExpectError(ECrossSocket,
+      procedure begin LApi.SetMinTlsVersion(tmvTls13); end,
+      'mbedTLS 未明确拒绝 TLS 1.3 最低版本');
+    // 不支持的版本不会破坏已有 TLS 1.2 配置。
+    LApi.SetMinTlsVersion(tmvTls12);
+    LObj.FreezeConfiguration;
+    ExpectError(ECrossSocket,
+      procedure begin LApi.SetMinTlsVersion(tmvTls12); end,
+      'mbedTLS 配置锁定后仍接受最低版本配置');
   finally
     LApi := nil;
   end;
@@ -573,11 +687,14 @@ begin
     TestOpenSsl;
     TestTls13;
     TestTls13MixedNames;
+    TestMinTlsVersion;
     TestSecurityLevel;
     TestErrorQueue;
     TestInitializationFailure(False);
     TestInitializationFailure(True);
     TestMinimumVersionFailure;
+    TestMinTlsVersionSetterFailure(False);
+    TestMinTlsVersionSetterFailure(True);
     TestExistingSelfTests;
     TestRsaKeyGeneration;
     {$ELSE}

@@ -52,7 +52,7 @@ type
   ///   </list>
   ///   加密私钥密码当前由 OpenSSL 后端支持；内置 Mbed TLS 2.14.0
   ///   因安全原因会拒绝非空密码。
-  ///   首个 SSL 连接创建后，证书、私钥、CA、VerifyPeer 和加密套件均不可再修改。
+  ///   首个 SSL 连接创建后，证书、私钥、CA、VerifyPeer、加密套件和最低协议版本均不可再修改。
   /// </remarks>
   ICrossSslSocket = interface(ICrossSocket)
   ['{32750F56-2824-4F5E-B556-1286DACE9188}']
@@ -222,6 +222,20 @@ type
     procedure SetTls13CipherSuites(const ACipherSuites: string);
 
     /// <summary>
+    ///   设置最低 TLS 协议版本（默认 TLS 1.2）。
+    /// </summary>
+    /// <remarks>
+    ///   tmvTls13 将下限提升至 TLS 1.3；tmvTls12 恢复默认下限。不低于 TLS 1.2。
+    ///   当前仅 OpenSSL 后端支持 tmvTls13，设置后回读上下文确认已生效，
+    ///   回读不一致或原生调用失败都抛 ESslContextInvalid，此 socket 的 TLS
+    ///   配置失效，必须重建对象。mbedTLS 仅支持 tmvTls12；未实现此配置的
+    ///   自定义后端对两种版本均明确抛出不支持异常。
+    ///   必须在首个 SSL 连接创建前调用；未启用 SSL 时不执行配置。
+    ///   不修改协议上限，也不修改 TLS 1.2 / TLS 1.3 套件名单。
+    /// </remarks>
+    procedure SetMinTlsVersion(const AVersion: TCrossTlsMinVersion);
+
+    /// <summary>
     ///   是否已启用 SSL
     /// </summary>
     property Ssl: Boolean read GetSsl;
@@ -311,6 +325,7 @@ type
     procedure SetVerifyPeer(const AValue: Boolean); virtual;
     procedure SetTls12CipherSuites(const ACipherRules: string); virtual;
     procedure SetTls13CipherSuites(const ACipherSuites: string); virtual;
+    procedure SetMinTlsVersion(const AVersion: TCrossTlsMinVersion); virtual;
 
     property Ssl: Boolean read GetSsl;
     property VerifyPeer: Boolean read GetVerifyPeer write SetVerifyPeer;
@@ -457,6 +472,20 @@ begin
   try
     raise ECrossSocket.CreateFmt(
       '%s does not support TLS 1.3 cipher-suite configuration.',
+      [ClassName]);
+  finally
+    EndTlsConfigUpdate;
+  end;
+end;
+
+procedure TCrossSslSocketBase.SetMinTlsVersion(const AVersion: TCrossTlsMinVersion);
+begin
+  if not Ssl then Exit;
+
+  BeginTlsConfigUpdate;
+  try
+    raise ECrossSocket.CreateFmt(
+      '%s does not support minimum TLS version configuration.',
       [ClassName]);
   finally
     EndTlsConfigUpdate;

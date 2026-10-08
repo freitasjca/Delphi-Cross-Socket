@@ -1497,6 +1497,13 @@ begin
     if Assigned(LRequestObj.FInitProc) then
       LRequestObj.FInitProc(ARequest);
 
+    // HEAD 按无正文发送，跳过正文预读和压缩。
+    if (LRequestObj.FMethod = THttpMethod.HEAD) then
+    begin
+      SendNoCompress(Pointer(nil), 0);
+      Exit;
+    end;
+
     // 压缩方式
     if (FCompressType <> ctNone) then
       LRequestObj.FHeader[HEADER_CONTENT_ENCODING] := ZLIB_CONTENT_ENCODING[FCompressType];
@@ -2087,9 +2094,20 @@ begin
     end;
 
     // 设置数据传输方式
+    if (FRequestObj.FMethod = THttpMethod.HEAD) then
+    begin
+      // HEAD 不发送请求正文，同时清除调用方设置的正文定界头。
+      FRequestObj.FHeader.Remove(HEADER_CONTENT_LENGTH);
+      FRequestObj.FHeader.Remove(HEADER_TRANSFER_ENCODING);
+    end else
     if AChunked then
       FRequestObj.FHeader[HEADER_TRANSFER_ENCODING] := 'chunked'
-    else if (ABodySize > 0) then
+    // RFC 9110 8.6: send Content-Length when the method gives the body a
+    // meaning, even when the body is empty - http.sys answers 411 otherwise.
+    else if (ABodySize > 0)
+      or SameText(FRequestObj.FMethod, THttpMethod.POST)
+      or SameText(FRequestObj.FMethod, THttpMethod.PUT)
+      or SameText(FRequestObj.FMethod, THttpMethod.PATCH) then
       FRequestObj.FHeader[HEADER_CONTENT_LENGTH] := ABodySize.ToString;
 
     // 设置接受的数据编码方式
@@ -2351,16 +2369,13 @@ begin
   end;
 
   // HEAD 请求不应包含请求体 (RFC 7231 §4.3.2)
-  // [FIX-HEAD-LOOP-2] Client mirror of the server's FIX-HEAD-LOOP-1. The header
-  // source rebuilds the header on every call and never returns False, and
-  // _SocketSend calls the source again after each completed SendBuf. HEAD used
-  // to pass AHeaderSource on its own, so the request header was resent until
-  // the connection went away: the server parsed dozens of duplicate HEAD
-  // requests (a 15747-byte read = 87 x 181-byte header), and when the client
-  // moved on, a server pipeline still running one of them read a connection
-  // that InternalClose had already cleared. The one-shot wrapper below is what
-  // ends the header, so HEAD now goes through it and stops there instead of
-  // calling ABodySource.
+  // [FIX-HEAD-LOOP-2] Client mirror of FIX-HEAD-LOOP-1 in
+  // TCrossHttpResponse._Send. _SocketSend calls the header source again after
+  // each completed SendBuf and the source never returns False, so passing
+  // AHeaderSource on its own resent the REQUEST header until the connection
+  // went away. Measured: the server parsed a 15747-byte read = 87 x the
+  // 181-byte HEAD header.
+
   LHeaderDone := False;
 
   _SocketSend(

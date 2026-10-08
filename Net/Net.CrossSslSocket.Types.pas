@@ -25,6 +25,9 @@ const
     'ECDHE-ECDSA-AES256-GCM-SHA384';
 
 type
+  // 最低 TLS 协议版本。tmvTls12 为默认值；tmvTls13 将下限提升至 TLS 1.3。
+  TCrossTlsMinVersion = (tmvTls12, tmvTls13);
+
   // 名称-数据结构体
   TEntryData = record
     Name, Value: string;

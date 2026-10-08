@@ -5303,26 +5303,12 @@ begin
   LContType := GetContentType;
   LServer := GetConnection.Server;
 
-  // [FIX-DCS-DOUBLECOMPRESS-1] Never compress a body that is already encoded.
-  //
-  // Reported 2026-09-24 against horse-provider-crosssocket: a Horse app that
-  // registers a compression middleware (THorse.Use(Compression(1024))) AND sets
-  // the provider's Cfg.Compressible := True sends gzip(gzip(json)) while
-  // announcing a SINGLE gzip -- because this function looked at the server
-  // setting, the body size, the content type and Accept-Encoding, but never at
-  // whether the response already carried a Content-Encoding. SendZCompress then
-  // OVERWRITES that header rather than appending, so nothing on the wire hints
-  // at the second layer. The client decompresses once, is handed binary, and
-  // Response.ContentAsString(TEncoding.UTF8) fails with "No mapping for the
-  // Unicode character exists in the target multi-byte code page".
-  //
-  // It looked method-specific in the report (GET and POST fine, PUT broken) but
-  // it is SIZE-specific: only a response over both thresholds is compressed
-  // twice, and only that PUT returned a large base64 payload.
-  //
-  // NB the header to test is the RESPONSE's FHeader. TCrossHttpRequest also has
-  // a ContentEncoding, with a GetContentEncoding accessor -- that one is what the
-  // CLIENT sent, and testing it here would guard the wrong direction.
+  // Never compress a body that is already encoded. Without this, a caller
+  // that compressed the body itself gets it compressed again, and
+  // SendZCompress OVERWRITES Content-Encoding rather than appending -- so the
+  // wire announces one gzip while carrying gzip(gzip(body)) and nothing hints
+  // at the second layer. NB this is the RESPONSE header; TCrossHttpRequest
+  // also has a ContentEncoding, which is what the CLIENT sent.
   if FHeader[HEADER_CONTENT_ENCODING] <> '' then
   begin
     ACompressType := ctNone;
@@ -5497,14 +5483,15 @@ var
   LHeaderDone, LIsHead: Boolean;
 begin
   // HEAD 请求不应包含响应体 (RFC 7231 §4.3.2)
-  // [FIX-HEAD-LOOP-1] Every header source rebuilds the header on each call and
+  // [FIX-HEAD-LOOP-1] Route HEAD THROUGH the one-shot wrapper below rather
+  // than around it. Every header source rebuilds its header on each call and
   // never returns False, and _SendQueueItem calls the source again after each
-  // completed SendBuf. HEAD used to pass AHeaderSource on its own, so the
-  // header block was resent until the peer reset the connection: a keep-alive
-  // client read the copies as the next response. The one-shot wrapper below is
-  // what ends the header, so HEAD now goes through it and stops there instead
-  // of calling ABodySource.
-  LIsHead := (FRequest.Method = 'HEAD');
+  // completed SendBuf -- the wrapper is what ends the header. Passing
+  // AHeaderSource on its own therefore resent the header block until the peer
+  // reset the connection, and a keep-alive client read the copies as its next
+  // response.
+  LIsHead := (FRequest.Method = THttpMethod.HEAD);
+
   LHeaderDone := False;
 
   _Send(
