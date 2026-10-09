@@ -218,6 +218,11 @@ type
   TCnWord16Array = array [0..0] of Word;
   {* 16 位无符号整数数组}
 
+  PSmallIntArray = ^TSmallIntArray;
+  {* 16 位有符号整数数组指针}
+  TSmallIntArray = array [0..0] of SmallInt;
+  {* 16 位有符号整数数组}
+
 {$IFDEF POSIX64}
   TCnLongWord32 = Cardinal;
   {* 统一定义 32 位无符号 LongWord，因为 Linux64/MacOS64 或 POSIX64 下面 LongWord 竟然是 64 位无符号数}
@@ -306,9 +311,20 @@ type
   TCnUInt64Array = array[0..(MaxInt div SizeOf(TUInt64) - 1)] of TUInt64;
   {* 静态 64 位无符号整数数组}
 
-type
   TCnMemSortCompareProc = function (P1, P2: Pointer; ElementByteSize: Integer): Integer;
   {* 内存固定块尺寸的数组排序比较函数原型}
+
+  ICnMemSerialize = interface
+    ['{25632D38-1154-4021-822D-1BB00A362CC2}']
+    function LoadFromMem(Mem: Pointer; Size: Integer = 0): Integer;
+    {* 某对象从 Mem 地址中读取自身状态，返回读取的字节长度。
+       内部应检测是否超过 Size，超过应抛异常。
+       如 Size 为 0 则按对象内部规则往前读取，不检查是否超界。}
+
+    function SaveToMem(Mem: Pointer): Integer;
+    {* 某对象将自身状态全部存储于 Mem 中，返回占用的字节长度。
+       如 Mem 为 nil 则直接返回所需占用字节长度。}
+  end;
 
 const
   CN_MAX_SQRT_INT64: Cardinal               = 3037000499;
@@ -344,6 +360,12 @@ const
   {* 最大的 64 位无符号数}
   CN_MAX_SIGNED_INT64_IN_TUINT64: TUInt64   = $7FFFFFFFFFFFFFFF;
   {* 64 位无符号数范围内最大的 64 位有符号数}
+
+  CN_CRYPTO_MAX_FILE_SIZE_MAPPING           = 512 * 1024 * 1024;
+  {* 密码库中用来判断是走 Stream 还是 Mapping 的文件大小阈值}
+
+  CN_CRYPTO_STREAM_BUF_SIZE                 = 4096 * 1024;
+  {* 密码库中文件 Stream 的统一缓冲区大小}
 
 {*
   对于 D567 等不支持 UInt64 的编译器，虽然可以用 Int64 代替 UInt64 进行加减、存储
@@ -724,7 +746,8 @@ function IsUInt64SubOverflowInt32(A: TUInt64; B: TUInt64): Boolean;
 }
 
 procedure UInt64Add(var R: TUInt64; A: TUInt64; B: TUInt64; out Carry: Integer);
-{* 两个 64 位无符号整数相加，A + B => R，如果有溢出，则溢出的 1 置进位标记里，否则进位标记清零。
+{* 两个 64 位无符号整数相加，A + B => R，R 可以是 A 或 B。
+   如果有溢出，则溢出的 1 置进位标记里，否则进位标记清零。
 
    参数：
      var R: TUInt64                       - 和
@@ -736,7 +759,8 @@ procedure UInt64Add(var R: TUInt64; A: TUInt64; B: TUInt64; out Carry: Integer);
 }
 
 procedure UInt64Sub(var R: TUInt64; A: TUInt64; B: TUInt64; out Carry: Integer);
-{* 两个 64 位无符号整数相减，A - B => R，如果不够减有借位，则借的 1 置借位标记里，否则借位标记清零。
+{* 两个 64 位无符号整数相减，A - B => R，，R 可以是 A 或 B。
+   如果不够减有借位，则借的 1 置借位标记里，否则借位标记清零。
 
    参数：
      var R: TUInt64                       - 差
@@ -1383,6 +1407,43 @@ procedure MemoryQuickSort(Mem: Pointer; ElementByteSize: Integer;
    返回值：（无）
 }
 
+function MemorySafeZero(Buffer: Pointer; ByteLength: Integer): Boolean;
+{* 安全地将内存块填充为零，确保不被编译器的死存储优化消除。
+   用于擦除密钥、私钥等敏感数据，防止残留于栈或堆中。
+   返回值用于函数内部防止编译器优化，调用者可无需处理返回值。
+   且不用 inline 进一步避免被优化。
+
+   参数：
+     Buffer: Pointer                      - 待清零的内存块地址
+     ByteLength: Integer                  - 待清零的字节长度
+
+   返回值：Boolean                        - 是否安全擦除完毕
+}
+
+function MemorySafeFree(var Arr: TBytes): Boolean;
+{* 安全地清空并释放一个动态字节数组：先以带防优化措施的擦除将全部内容置零，
+   再释放本参数持有的数组引用，用于密钥、口令、派生中间量等敏感数据用毕后的
+   彻底销毁，防止残留内容经内存转储、休眠文件或堆复用而泄露。
+   若该数组存在其他引用（引用计数大于一），置零对所有引用同时生效，
+   本函数仅负责释放当前参数所持有的这一个引用。
+   数组本身为空时无内容可擦除，直接返回 False，但参数仍会被置空。
+
+   参数：
+     var Arr: TBytes                      - 待销毁的动态字节数组，返回后必为空
+
+   返回值：Boolean                        - 是否执行了内容清零；数组为空时返回 False
+}
+
+function MemoryCheckZero(Buffer: Pointer; ByteLength: Integer): Boolean;
+{* 检查内存块内容是否全零。
+
+   参数：
+     Buffer: Pointer                      - 待检查的内存块地址
+     ByteLength: Integer                  - 待检查的字节长度
+
+   返回值：Boolean                        - 是否内容全零
+}
+
 function UInt8ToBinStr(V: Byte): string;
 {* 将一 8 位无符号整数转换为二进制字符串。
 
@@ -1928,7 +1989,7 @@ function ConstTimeCompareBytes(const A, B: TBytes): Boolean;
      const A: TBytes                      - 待比较的字节数组一
      const B: TBytes                      - 待比较的字节数组二
 
-   返回值：Boolean                        - 是否相同
+   返回值：Boolean                        - 返回是否相等
 }
 
 function ConstTimeExpandBoolean8(V: Boolean): Byte;
@@ -2011,11 +2072,55 @@ function ConstTimeConditionalSelect64(Condition: Boolean; A: TUInt64; B: TUInt64
    返回值：TUInt64                        - 返回选择的 64 位整数
 }
 
+procedure ConstTimeConditionalAssign8(CanAssign: Boolean; Source: Byte; var Dest: Byte);
+{* 针对两个单字节变量执行时间固定的赋值，CanAssign 为 True 时执行 Dest := Source，否则什么都不做。
+
+   参数：
+     CanAssign: Boolean                   - 是否选择 A 也就是参数一
+     Source: Byte                         - 待赋值的 8 位整数源值
+     var Dest: Byte                       - 待赋值的 8 位整数目标变量
+
+   返回值：（无）
+}
+
+procedure ConstTimeConditionalAssign16(CanAssign: Boolean; Source: Word; var Dest: Word);
+{* 针对两个双字节变量执行时间固定的赋值，CanAssign 为 True 时执行 Dest := Source，否则什么都不做。
+
+   参数：
+     CanAssign: Boolean                   - 是否选择 A 也就是参数一
+     Source: Word                         - 待赋值的 16 位整数源值
+     var Dest: Word                       - 待赋值的 16 位整数目标变量
+
+   返回值：（无）
+}
+
+procedure ConstTimeConditionalAssign32(CanAssign: Boolean; Source: Cardinal; var Dest: Cardinal);
+{* 针对两个四字节变量执行时间固定的赋值，CanAssign 为 True 时执行 Dest := Source，否则什么都不做。
+
+   参数：
+     CanAssign: Boolean                   - 是否选择 A 也就是参数一
+     Source: Cardinal                     - 待赋值的 32 位整数源值
+     var Dest: Cardinal                   - 待赋值的 32 位整数目标变量
+
+   返回值：（无）
+}
+
+procedure ConstTimeConditionalAssign64(CanAssign: Boolean; Source: TUInt64; var Dest: TUInt64);
+{* 针对两个八字节变量执行时间固定的赋值，CanAssign 为 True 时执行 Dest := Source，否则什么都不做。
+
+   参数：
+     CanAssign: Boolean                   - 是否选择 A 也就是参数一
+     Source: TUInt64                      - 待赋值的 64 位整数源值
+     var Dest: TUInt64                    - 待赋值的 64 位整数目标变量
+
+   返回值：（无）
+}
+
 // ================ 以上是执行时间固定的无 if 判断的部分逻辑函数 ===============
 
-{$IFDEF MSWINDOWS}
+{$IFDEF CPUX86ORX64}
 
-// 这四个函数因为用了 Intel 汇编，因而只支持 32 位和 64 位的 Intel CPU，照理应该用条件：CPUX86 或 CPUX64
+// 这四个函数因为用了 Intel 汇编，因而只支持 32 位和 64 位的 Intel CPU，用条件：CPUX86 或 CPUX64
 
 procedure Int64DivInt32Mod(A: Int64; B: Integer;
   var DivRes: Integer; var ModRes: Integer);
@@ -2636,7 +2741,13 @@ begin
 
   if BitCount < 0 then
   begin
-    MemoryShiftRight(AMem, BMem, MemByteLen, -BitCount);
+    // BitCount 为 CN_MIN_INT32 时 -BitCount 溢出回绕仍为 CN_MIN_INT32，将导致
+    // 左右移无限互递归；位数超过缓冲区位数时结果为全 0，用 CN_MAX_INT32 走
+    // 既有的清零分支
+    if BitCount = CN_MIN_INT32 then
+      MemoryShiftRight(AMem, BMem, MemByteLen, CN_MAX_INT32)
+    else
+      MemoryShiftRight(AMem, BMem, MemByteLen, -BitCount);
     Exit;
   end;
 
@@ -2693,7 +2804,11 @@ begin
 
   if BitCount < 0 then
   begin
-    MemoryShiftLeft(AMem, BMem, MemByteLen, -BitCount);
+    // 同 ShiftLeft：CN_MIN_INT32 取相反数溢出回绕，特判走清零分支
+    if BitCount = CN_MIN_INT32 then
+      MemoryShiftLeft(AMem, BMem, MemByteLen, CN_MAX_INT32)
+    else
+      MemoryShiftLeft(AMem, BMem, MemByteLen, -BitCount);
     Exit;
   end;
 
@@ -3023,6 +3138,126 @@ begin
       Dec(MemByteLen);
     end;
   end;
+end;
+
+procedure InternalQuickSort(Mem: Pointer; L, R: Integer; ElementByteSize: Integer;
+  CompareProc: TCnMemSortCompareProc);
+var
+  I, J, P: Integer;
+begin
+  repeat
+    I := L;
+    J := R;
+    P := (L + R) shr 1;
+    repeat
+      while CompareProc(Pointer(TCnIntAddress(Mem) + I * ElementByteSize),
+        Pointer(TCnIntAddress(Mem) + P * ElementByteSize), ElementByteSize) < 0 do
+        Inc(I);
+      while CompareProc(Pointer(TCnIntAddress(Mem) + J * ElementByteSize),
+        Pointer(TCnIntAddress(Mem) + P * ElementByteSize), ElementByteSize) > 0 do
+        Dec(J);
+
+      if I <= J then
+      begin
+        MemorySwap(Pointer(TCnIntAddress(Mem) + I * ElementByteSize),
+          Pointer(TCnIntAddress(Mem) + J * ElementByteSize), ElementByteSize);
+
+        if P = I then
+          P := J
+        else if P = J then
+          P := I;
+        Inc(I);
+        Dec(J);
+      end;
+    until I > J;
+
+    if L < J then
+      InternalQuickSort(Mem, L, J, ElementByteSize, CompareProc);
+    L := I;
+  until I >= R;
+end;
+
+function DefaultCompareProc(P1, P2: Pointer; ElementByteSize: Integer): Integer;
+begin
+  Result := MemoryCompare(P1, P2, ElementByteSize);
+end;
+
+procedure MemoryQuickSort(Mem: Pointer; ElementByteSize: Integer;
+  ElementCount: Integer; CompareProc: TCnMemSortCompareProc);
+begin
+  if (Mem <> nil) and (ElementCount > 0) and (ElementCount > 0) then
+  begin
+    if Assigned(CompareProc) then
+      InternalQuickSort(Mem, 0, ElementCount - 1, ElementByteSize, CompareProc)
+    else
+      InternalQuickSort(Mem, 0, ElementCount - 1, ElementByteSize, DefaultCompareProc);
+  end;
+end;
+
+function MemorySafeZero(Buffer: Pointer; ByteLength: Integer): Boolean;
+var
+  P: PByte;
+  VolatileSink: Byte;
+begin
+  Result := False;
+  if (Buffer = nil) or (ByteLength <= 0) then
+    Exit;
+
+  // 使用 FillChar 进行批量清零，其内部生成 REP STOSB（x86/x64）或等价的
+  // 向量化指令，由 CPU 硬件级优化，远快于逐字节 Pascal 循环。
+  FillChar(Buffer^, ByteLength, 0);
+
+  // 读回首尾字节建立数据依赖，阻止编译器的死存储消除优化。
+  // 仅读首字节时，理论上一台足够激进的编译器可仅保留首字节写入而丢弃其余；
+  // 同时读取尾字节可确保整个填充范围都被观测到，安全性优于原实现。
+  // ByteLength 为 1 时首尾同址，只读一次即可。
+  P := PByte(Buffer);
+  VolatileSink := P^;
+  if ByteLength > 1 then
+  begin
+    Inc(P, ByteLength - 1);
+    VolatileSink := VolatileSink or P^;
+  end;
+  Result := VolatileSink = 0;
+end;
+
+function MemorySafeFree(var Arr: TBytes): Boolean;
+var
+  Len: Integer;
+begin
+  Result := False;
+  Len := Length(Arr);
+  if Len <= 0 then
+    Exit;
+
+  // 先以带防优化措施的擦除将全部内容置零，再释放引用；
+  // 置零必须先于释放完成，否则无法保证堆块交还前被覆盖。
+  Result := MemorySafeZero(@Arr[0], Len);
+  SetLength(Arr, 0);
+
+  // 释放本参数持有的引用；若引用计数归一，内存交还堆管理器，
+  // 其他引用（若有）看到的也已是全零内容。
+  Arr := nil;
+end;
+
+function MemoryCheckZero(Buffer: Pointer; ByteLength: Integer): Boolean;
+var
+  P: PByte;
+  I: Integer;
+begin
+  Result := False;
+  if (Buffer = nil) or (ByteLength <= 0) then
+    Exit;
+
+  P := PByte(Buffer);
+  for I := 0 to ByteLength - 1 do
+  begin
+    if P^ <> 0 then
+      Exit;
+    Inc(P);
+  end;
+
+  Result := True;
 end;
 
 function UInt8ToBinStr(V: Byte): string;
@@ -3775,7 +4010,7 @@ function SarInt64(V: Int64; ShiftCount: Integer): Int64;
 begin
   Result := V shr ShiftCount;
   if (V and $8000000000000000) <> 0 then
-    Result := Result or ($FFFFFFFFFFFFFFFF shl (64 - ShiftCount));
+    Result := Result or (Int64($FFFFFFFFFFFFFFFF) shl (64 - ShiftCount));
 end;
 
 procedure ConstTimeConditionalSwap8(CanSwap: Boolean; var A, B: Byte);
@@ -3939,9 +4174,269 @@ begin
   Result := B;
 end;
 
-{$IFDEF MSWINDOWS}
+procedure ConstTimeConditionalAssign8(CanAssign: Boolean; Source: Byte; var Dest: Byte);
+var
+  Mask: Byte;
+begin
+  Mask := ConstTimeExpandBoolean8(CanAssign);
+  Dest := (Dest and (not Mask)) or (Source and Mask);
+end;
+
+procedure ConstTimeConditionalAssign16(CanAssign: Boolean; Source: Word; var Dest: Word);
+var
+  Mask: Word;
+begin
+  Mask := ConstTimeExpandBoolean16(CanAssign);
+  Dest := (Dest and (not Mask)) or (Source and Mask);
+end;
+
+procedure ConstTimeConditionalAssign32(CanAssign: Boolean; Source: Cardinal; var Dest: Cardinal);
+var
+  Mask: Cardinal;
+begin
+  Mask := ConstTimeExpandBoolean32(CanAssign);
+  Dest := (Dest and (not Mask)) or (Source and Mask);
+end;
+
+procedure ConstTimeConditionalAssign64(CanAssign: Boolean; Source: TUInt64; var Dest: TUInt64);
+var
+  Mask: TUInt64;
+begin
+  Mask := ConstTimeExpandBoolean64(CanAssign);
+  Dest := (Dest and (not Mask)) or (Source and Mask);
+end;
+
+{$IFDEF CPUX86ORX64}
+
+{$IFDEF CALL_SYSV_AMD64}
+
+// 非 Windows 平台上的 x64 FPC（macOS/Linux）采用 System V AMD64 ABI：
+//   参数依次通过 RDI、RSI、RDX、RCX、R8、R9 寄存器传递。
+//
+// Delphi 以及 Windows 平台上的 FPC 采用 Microsoft x64 ABI：
+//   参数依次通过 RCX、RDX、R8、R9 寄存器传递。
+//
+// 下面已有的汇编代码是按照 Microsoft x64 ABI 编写的。
+// 如果直接运行在 System V AMD64 ABI 环境下，将会读取错误的参数寄存器，
+// 从而导致 EDivByZero（除零异常）。
+//
+// Int64DivInt32Mod、UInt64DivUInt32Mod 和 Int128DivInt64Mod
+// 均采用纯 Pascal 实现（依赖 CPU 原生 div/mod 指令，性能已经足够）。
+//
+// UInt128DivUInt64Mod 则仍采用汇编实现，并按照 System V AMD64 ABI
+// 正确映射参数寄存器，以获得更好的性能。该函数是在定义
+// BN_DATA_USE_64 时的热点路径（Hot Path），由 BigNumberDiv 调用。
+
+procedure Int64DivInt32Mod(A: Int64; B: Integer; var DivRes, ModRes: Integer);
+begin
+  if B = 0 then
+    raise EDivByZero.Create(SDivByZero);
+  DivRes := A div B;
+  ModRes := A mod B;
+end;
+
+procedure UInt64DivUInt32Mod(A: TUInt64; B: Cardinal; var DivRes, ModRes: Cardinal);
+begin
+  if B = 0 then
+    raise EDivByZero.Create(SDivByZero);
+  DivRes := A div B;
+  ModRes := A mod B;
+end;
+
+procedure Int128DivInt64Mod(ALo, AHi: Int64; B: Int64; var DivRes, ModRes: Int64);
+var
+  C: Integer;
+begin
+  if B = 0 then
+    raise EDivByZero.Create(SDivByZero);
+
+  if (AHi = 0) or (AHi = $FFFFFFFFFFFFFFFF) then
+  begin
+    DivRes := ALo div B;
+    ModRes := ALo mod B;
+  end
+  else
+  begin
+    if B < 0 then
+    begin
+      Int128DivInt64Mod(ALo, AHi, -B, DivRes, ModRes);
+      DivRes := -DivRes;
+      Exit;
+    end;
+
+    if AHi < 0 then
+    begin
+      AHi := not AHi;
+      ALo := not ALo;
+{$IFDEF SUPPORT_UINT64}
+      UInt64Add(UInt64(ALo), UInt64(ALo), 1, C);
+{$ELSE}
+      UInt64Add(ALo, ALo, 1, C);
+{$ENDIF}
+      if C > 0 then
+        AHi := AHi + C;
+
+      Int128DivInt64Mod(ALo, AHi, B, DivRes, ModRes);
+
+      if ModRes = 0 then
+        DivRes := -DivRes
+      else
+      begin
+        DivRes := -DivRes - 1;
+        ModRes := B - ModRes;
+      end;
+      Exit;
+    end;
+
+{$IFDEF SUPPORT_UINT64}
+    UInt128DivUInt64Mod(TUInt64(ALo), TUInt64(AHi), TUInt64(B), TUInt64(DivRes), TUInt64(ModRes));
+{$ELSE}
+    UInt128DivUInt64Mod(ALo, AHi, B, DivRes, ModRes);
+{$ENDIF}
+  end;
+end;
+
+procedure UInt128DivUInt64Mod(ALo, AHi: TUInt64; B: TUInt64;
+  var DivRes, ModRes: TUInt64); assembler; {$IFDEF FPC} nostackframe; {$ENDIF}
+asm
+  // System V AMD64 ABI: RDI=ALo, RSI=AHi, RDX=B, RCX=&DivRes, R8=&ModRes
+  // DIV instruction: RDX:RAX / operand -> RAX=quotient, RDX=remainder
+  MOV R9, RDX       // Save B before RDX is reused for the dividend high word
+  MOV RAX, RDI      // ALo -> RAX (dividend low)
+  MOV RDX, RSI      // AHi -> RDX (dividend high)
+  DIV R9            // RDX:RAX / R9 -> RAX=quotient, RDX=remainder
+  MOV [RCX], RAX    // *DivRes = quotient
+  MOV [R8], RDX     // *ModRes = remainder
+end;
+
+{$ELSE}
 
 {$IFDEF CPUX64}
+
+{$UNDEF NEED_PASCAL}
+{$IFDEF MACOS}
+  {$DEFINE NEED_PASCAL}
+{$ENDIF}
+
+{$IFDEF LINUX}
+  {$DEFINE NEED_PASCAL}
+{$ENDIF}
+
+{$IFDEF NEED_PASCAL}
+
+// Delphi 下的 MACOS/Linux 不支持 asm，将上面的纯 Pascal 复制过来
+
+procedure Int64DivInt32Mod(A: Int64; B: Integer; var DivRes, ModRes: Integer);
+begin
+  if B = 0 then
+    raise EDivByZero.Create(SDivByZero);
+  DivRes := A div B;
+  ModRes := A mod B;
+end;
+
+procedure UInt64DivUInt32Mod(A: TUInt64; B: Cardinal; var DivRes, ModRes: Cardinal);
+begin
+  if B = 0 then
+    raise EDivByZero.Create(SDivByZero);
+  DivRes := A div B;
+  ModRes := A mod B;
+end;
+
+procedure Int128DivInt64Mod(ALo, AHi: Int64; B: Int64; var DivRes, ModRes: Int64);
+var
+  C: Integer;
+begin
+  if B = 0 then
+    raise EDivByZero.Create(SDivByZero);
+
+  if (AHi = 0) or (AHi = $FFFFFFFFFFFFFFFF) then
+  begin
+    DivRes := ALo div B;
+    ModRes := ALo mod B;
+  end
+  else
+  begin
+    if B < 0 then
+    begin
+      Int128DivInt64Mod(ALo, AHi, -B, DivRes, ModRes);
+      DivRes := -DivRes;
+      Exit;
+    end;
+
+    if AHi < 0 then
+    begin
+      AHi := not AHi;
+      ALo := not ALo;
+{$IFDEF SUPPORT_UINT64}
+      UInt64Add(UInt64(ALo), UInt64(ALo), 1, C);
+{$ELSE}
+      UInt64Add(ALo, ALo, 1, C);
+{$ENDIF}
+      if C > 0 then
+        AHi := AHi + C;
+
+      Int128DivInt64Mod(ALo, AHi, B, DivRes, ModRes);
+
+      if ModRes = 0 then
+        DivRes := -DivRes
+      else
+      begin
+        DivRes := -DivRes - 1;
+        ModRes := B - ModRes;
+      end;
+      Exit;
+    end;
+
+{$IFDEF SUPPORT_UINT64}
+    UInt128DivUInt64Mod(TUInt64(ALo), TUInt64(AHi), TUInt64(B), TUInt64(DivRes), TUInt64(ModRes));
+{$ELSE}
+    UInt128DivUInt64Mod(ALo, AHi, B, DivRes, ModRes);
+{$ENDIF}
+  end;
+end;
+
+procedure UInt128DivUInt64Mod(ALo, AHi: TUInt64; B: TUInt64; var DivRes, ModRes: TUInt64);
+var
+  I, Cnt: Integer;
+  Q, R: TUInt64;
+begin
+  if B = 0 then
+    raise EDivByZero.Create(SDivByZero);
+
+  if AHi = 0 then
+  begin
+    DivRes := UInt64Div(ALo, B);
+    ModRes := UInt64Mod(ALo, B);
+  end
+  else
+  begin
+    // 有高位有低位咋办？先判断是否会溢出，如果 AHi >= B，则表示商要超 64 位，溢出
+    if UInt64Compare(AHi, B) >= 0 then
+      raise EIntOverflow.Create(SIntOverflow);
+
+    Q := 0;
+    R := 0;
+    Cnt := GetUInt64LowBits(AHi) + 64;
+    for I := Cnt downto 0 do
+    begin
+      R := R shl 1;
+      if IsUInt128BitSet(ALo, AHi, I) then  // 被除数的第 I 位是否是 0
+        R := R or 1
+      else
+        R := R and TUInt64(not 1);
+
+      if UInt64Compare(R, B) >= 0 then
+      begin
+        R := R - B;
+        Q := Q or (TUInt64(1) shl I);
+      end;
+    end;
+    DivRes := Q;
+    ModRes := R;
+  end;
+end;
+
+{$ELSE}
 
 // 64 位汇编用 IDIV 和 IDIV 指令实现，其中 A 在 RCX 里，B 在 EDX/RDX 里，DivRes 地址在 R8 里，ModRes 地址在 R9 里
 procedure Int64DivInt32Mod(A: Int64; B: Integer; var DivRes, ModRes: Integer); assembler;
@@ -3986,6 +4481,8 @@ asm
         MOV     RAX, [RBP + $30]              // ModRes 地址放入 RAX
         MOV     [RAX], RDX                    // 余数放入 RAX 所指的 ModRes
 end;
+
+{$ENDIF}
 
 {$ELSE}
 
@@ -4116,6 +4613,8 @@ begin
     ModRes := R;
   end;
 end;
+
+{$ENDIF}
 
 {$ENDIF}
 
@@ -4252,6 +4751,23 @@ end;
 
 {$ELSE}
 
+{$IFDEF CALL_SYSV_AMD64}
+
+// 64-bit unsigned multiply: A * B -> ResLo:ResHi (System V AMD64 ABI)
+// RDI=A, RSI=B, RDX=&ResLo, RCX=&ResHi
+// Note: MUL clobbers RDX (high result), so &ResLo must be saved beforehand.
+procedure UInt64MulUInt64(A, B: UInt64; var ResLo, ResHi: UInt64); assembler;
+  {$IFDEF FPC} nostackframe; {$ENDIF}
+asm
+  MOV RAX, RDI      // A -> RAX
+  MOV R8, RDX       // save &ResLo (MUL will clobber RDX)
+  MUL RSI           // RDX:RAX = RAX * B
+  MOV [R8], RAX     // *ResLo = low product
+  MOV [RCX], RDX    // *ResHi = high product
+end;
+
+{$ELSE}
+
 // 两个无符号 64 位整数相乘，结果放 ResLo 与 ResHi 中
 procedure UInt64MulUInt64(A, B: TUInt64; var ResLo, ResHi: TUInt64);
 var
@@ -4284,6 +4800,8 @@ begin
   Int64Rec(ResHi).Lo := Int64Rec(P).Lo;
   Int64Rec(ResHi).Hi := Int64Rec(R1Hi).Lo + Int64Rec(R2Hi).Lo + Int64Rec(ZX).Hi + Int64Rec(P).Hi;
 end;
+
+{$ENDIF}
 
 {$ENDIF}
 
@@ -4815,11 +5333,30 @@ end;
 
 // 封装的 Int64 Mod，碰到负值时取反求模再模减
 function Int64Mod(M, N: Int64): Int64;
+var
+  T: Int64;
 begin
-  if M > 0 then
+  if M = 0 then
+    Result := 0
+  else if M > 0 then
     Result := M mod N
+  else if M = CN_MIN_INT64 then
+  begin
+    // -Low(Int64) = High(Int64) + 1 会溢出，拆开算
+    T := (High(Int64) mod N + 1) mod N;
+    if T > 0 then
+      Result := N - T
+    else
+      Result := 0;
+  end
   else
-    Result := N - ((-M) mod N);
+  begin
+    T := (-M) mod N;
+    if T > 0 then
+      Result := N - T
+    else
+      Result := 0;
+  end;
 end;
 
 function Int64CenterMod(A: Int64; N: Int64): Int64;
@@ -4920,22 +5457,28 @@ end;
 
 // 两个 64 位无符号整数相加，A + B => R，如果有溢出，则溢出的 1 搁进位标记里，否则清零
 procedure UInt64Add(var R: TUInt64; A, B: TUInt64; out Carry: Integer);
+var
+  T: TUInt64;
 begin
-  R := A + B;
-  if UInt64Compare(R, A) < 0 then // 无符号相加，结果只要小于任一个数就说明溢出了
+  T := A + B;                     // 用 T 防止 R 是 A B 之一的情况
+  if UInt64Compare(T, A) < 0 then // 无符号相加，结果只要小于任一个数就说明溢出了
     Carry := 1
   else
     Carry := 0;
+  R := T;
 end;
 
 // 两个 64 位无符号整数相减，A - B => R，如果不够减有借位，则借的 1 搁借位标记里，否则清零
 procedure UInt64Sub(var R: TUInt64; A, B: TUInt64; out Carry: Integer);
+var
+  T: TUInt64;
 begin
-  R := A - B;
-  if UInt64Compare(R, A) > 0 then // 无符号相减，结果只要大于被减数就说明借位了
+  T := A - B;                     // 用 T 防止 R 是 A B 之一的情况
+  if UInt64Compare(T, A) > 0 then // 无符号相减，结果只要大于被减数就说明借位了
     Carry := 1
   else
     Carry := 0;
+  R := T;
 end;
 
 // 判断两个 32 位有符号整数相乘是否溢出 32 位有符号整数上限
@@ -5286,7 +5829,7 @@ begin
       begin
         if (E and 1) <> 0 then
         begin
-          if (B <> 0) and (P > N div B) then
+          if (B <> 0) and (UInt64Compare(P, UInt64Div(N, B)) > 0) then
           begin
             Overflow := True;
             Break;
@@ -5296,7 +5839,7 @@ begin
         E := E shr 1;
         if E > 0 then
         begin
-          if (B <> 0) and (B > N div B) then
+          if (B <> 0) and (UInt64Compare(B, UInt64Div(N, B)) > 0) then
           begin
             Overflow := True;
             Break;
@@ -5383,60 +5926,6 @@ begin
   end
   else
     Result := 0;
-end;
-
-procedure InternalQuickSort(Mem: Pointer; L, R: Integer; ElementByteSize: Integer;
-  CompareProc: TCnMemSortCompareProc);
-var
-  I, J, P: Integer;
-begin
-  repeat
-    I := L;
-    J := R;
-    P := (L + R) shr 1;
-    repeat
-      while CompareProc(Pointer(TCnIntAddress(Mem) + I * ElementByteSize),
-        Pointer(TCnIntAddress(Mem) + P * ElementByteSize), ElementByteSize) < 0 do
-        Inc(I);
-      while CompareProc(Pointer(TCnIntAddress(Mem) + J * ElementByteSize),
-        Pointer(TCnIntAddress(Mem) + P * ElementByteSize), ElementByteSize) > 0 do
-        Dec(J);
-
-      if I <= J then
-      begin
-        MemorySwap(Pointer(TCnIntAddress(Mem) + I * ElementByteSize),
-          Pointer(TCnIntAddress(Mem) + J * ElementByteSize), ElementByteSize);
-
-        if P = I then
-          P := J
-        else if P = J then
-          P := I;
-        Inc(I);
-        Dec(J);
-      end;
-    until I > J;
-
-    if L < J then
-      InternalQuickSort(Mem, L, J, ElementByteSize, CompareProc);
-    L := I;
-  until I >= R;
-end;
-
-function DefaultCompareProc(P1, P2: Pointer; ElementByteSize: Integer): Integer;
-begin
-  Result := MemoryCompare(P1, P2, ElementByteSize);
-end;
-
-procedure MemoryQuickSort(Mem: Pointer; ElementByteSize: Integer;
-  ElementCount: Integer; CompareProc: TCnMemSortCompareProc);
-begin
-  if (Mem <> nil) and (ElementCount > 0) and (ElementCount > 0) then
-  begin
-    if Assigned(CompareProc) then
-      InternalQuickSort(Mem, 0, ElementCount - 1, ElementByteSize, CompareProc)
-    else
-      InternalQuickSort(Mem, 0, ElementCount - 1, ElementByteSize, DefaultCompareProc);
-  end;
 end;
 
 {$IFDEF COMPILER5}

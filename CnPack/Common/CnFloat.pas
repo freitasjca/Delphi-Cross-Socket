@@ -134,6 +134,9 @@ type
   ECnFloatSizeError = class(Exception);
   {* 浮点数长度异常}
 
+  ECnFloatFormatError = class(Exception);
+  {* 浮点数文本格式错误异常}
+
 const
   CN_EXTENDED_SIZE_8  =          8;
   {* Win64 下的 Extended 类型的长度，只有 8 字节}
@@ -414,7 +417,7 @@ function ExtendedToUInt64(F: Extended): TUInt64;
 {* 把 Extended 赋值给用 Int64 有符号整型模拟的 64 位无符号整型，仨函数实现相同。
 
    参数：
-     F: Extended                          - 待赋值的双精度浮点数
+     F: Extended                          - 待赋值的扩展精度浮点数
 
    返回值：TUInt64                        - 返回的 64 位无符号整型值
 }
@@ -474,13 +477,26 @@ function ExtendedIsNan(AValue: Extended): Boolean;
 }
 
 function ExtendedToStr(AValue: Extended): string;
-{* 将扩展精度浮点数转换为字符串，支持其最大的精度。
+{* 将扩展精度浮点数转换为不变格式字符串，支持其最大的精度。
    Delphi 默认 15 位小数，本函数增大到 18，也即支持 1234567899876543.21。
+   返回结果固定使用 '.' 作为小数点，不受当前区域设置影响。
 
    参数：
      AValue: Extended                     - 待判断的扩展精度浮点数
 
    返回值：string                         - 返回转换结果
+}
+
+function StrToExtended(const S: string): Extended;
+{* 将不变格式的浮点数字符串转换为扩展精度浮点数。
+   输入格式使用固定的 '.' 作为小数点，不受当前区域设置影响；不接受
+   区域设置使用的逗号小数点。转换要求输入被完整消费，非法格式将引发
+   ECnFloatFormatError 异常。
+
+   参数：
+     S: string                             - 待转换的不变格式浮点数字符串
+
+   返回值：Extended                        - 返回转换结果
 }
 
 // FPC、Windows 64/Linux 64 等平台以及 Delphi 5、6 不支持以下三个函数
@@ -489,7 +505,7 @@ function ExtendedToStr(AValue: Extended): string;
 {
   此处实现了三个将 Extended 类型转换为二、八、十六进制字符串的函数。
   算法是读取 Extended 类型在内存中的二进制内容进行转换。关于 Extended 类型的说明
-  可以参考其它资料。Double 与 Single 类型为系统通用支持的浮点类型，与 Delphi 特有的
+  可以参考其他资料。Double 与 Single 类型为系统通用支持的浮点类型，与 Delphi 特有的
   Extended 在存储形式上稍有不同。三者均将尾数规格化，但 Double 与 Single 尾数部分略
   掉了默认的 1。比如尾数二进制内容为 1.001，则在 Double 与 Single 中存储为 001，略去
   小数点前的 1，而在 Extended 里存储为 1001。
@@ -536,6 +552,7 @@ const
 
 resourcestring
   SCnErrorExtendedSizeFmt = 'Extended Size Error %d';
+  SCnErrorExtendedInvalidFormat = 'Invalid Invariant Extended Value';
 
 type
   TExtendedRec10 = packed record
@@ -1229,7 +1246,8 @@ begin
   SignNegative := (PCardinal(@Value)^ and CN_SIGN_SINGLE_MASK) <> 0;
   Exponent := ((PCardinal(@Value)^ and CN_EXPONENT_SINGLE_MASK) shr 23) - CN_EXPONENT_OFFSET_SINGLE;
   Mantissa := PCardinal(@Value)^ and CN_SIGNIFICAND_SINGLE_MASK;
-  Mantissa := Mantissa or (1 shl 23); // 高位再加个 1
+  if Exponent > -CN_EXPONENT_OFFSET_SINGLE then
+    Mantissa := Mantissa or (1 shl CN_SINGLE_SIGNIFICAND_BITLENGTH); // 规格化，高位再加个 1
 end;
 
 procedure ExtractFloatDouble(Value: Double; out SignNegative: Boolean;
@@ -1238,7 +1256,8 @@ begin
   SignNegative := (PUInt64(@Value)^ and CN_SIGN_DOUBLE_MASK) <> 0;
   Exponent := ((PUInt64(@Value)^ and CN_EXPONENT_DOUBLE_MASK) shr 52) - CN_EXPONENT_OFFSET_DOUBLE;
   Mantissa := PUInt64(@Value)^ and CN_SIGNIFICAND_DOUBLE_MASK;
-  Mantissa := Mantissa or (TUInt64(1) shl 52); // 高位再加个 1
+  if Exponent > -CN_EXPONENT_OFFSET_DOUBLE then
+    Mantissa := Mantissa or (TUInt64(1) shl CN_DOUBLE_SIGNIFICAND_BITLENGTH); // 规格化，高位再加个 1
 end;
 
 procedure ExtractFloatExtended(Value: Extended; out SignNegative: Boolean;
@@ -1432,23 +1451,31 @@ end;
 // 普通 Trunc 浮点数最大只能返回 Int64，本函数返回最大 UInt64
 function UTrunc(F: Extended): TUInt64;
 var
-  T: Integer;
+  T, L: Integer;
   SignNeg: Boolean;
   Exponent: Integer;
   Mantissa: TUInt64;
 begin
   // 得到真实指数与 1 开头的有效数字（小数点在 1 后）
   ExtractFloatExtended(F, SignNeg, Exponent, Mantissa);
-  if SignNeg then
-    raise ERangeError.Create(SRangeError); // 负数不支持
+  if SignNeg and (Mantissa <> 0) then
+    raise ERangeError.Create(SRangeError); // 有效负数不支持
 
-  // Mantissa 有 64 位有效数字，其中小数点后 63 位，如果指数小于 0 说明小数点要往左移，那么值就是 0 了
+  if (Mantissa = 0) and SignNeg then       // 如果是负 0 则变成正 0
+    SignNeg := False;
+
+  if SizeOf(Extended) = CN_EXTENDED_SIZE_8 then
+    L := CN_DOUBLE_SIGNIFICAND_BITLENGTH
+  else
+    L := CN_EXTENDED_SIGNIFICAND_BITLENGTH;
+
+  // Mantissa 有 64/53 位有效数字，其中小数点后 63/52 位，如果指数小于 0 说明小数点要往左移，那么值就是 0 了
   if Exponent < 0 then
     Result := 0
   else
   begin
     // 将小数点往右移 Exponent 位，小数点左边的是整数部分
-    T := 63 - Exponent;    // 小数点在 0 到 63 位的 63 位右边，小数点右移后在 T 位右边
+    T := L - Exponent;    // 小数点在 0 到 63/52 位的 63/52 位右边，小数点右移后在 T 位右边
     if T < 0 then
       raise ERangeError.Create(SRangeError); // Exponent 太大
 
@@ -1520,9 +1547,40 @@ end;
 function ExtendedToStr(AValue: Extended): string;
 var
   Buffer: array[0..63] of Char;
+  I, L: Integer;
+  LDecimalSeparator: Char;
 begin
-  SetString(Result, Buffer, FloatToText(Buffer, AValue, {$IFNDEF FPC} fvExtended, {$ENDIF}
-     ffGeneral,  18, 0)); // 内部限制了最大 18
+  L := FloatToText(Buffer, AValue, {$IFNDEF FPC} fvExtended, {$ENDIF}
+    ffGeneral, 18, 0); // 内部限制了最大 18
+  SetString(Result, Buffer, L);
+
+  // FloatToText 在 Delphi 5/6/7 和 FPC 中均可能使用当前区域设置的
+  // DecimalSeparator。这里仅规范化返回文本，不修改全局设置，避免影响其他线程。
+{$IFDEF FPC}
+  LDecimalSeparator := DefaultFormatSettings.DecimalSeparator;
+{$ELSE}
+  {$IFDEF SUPPORT_GLOBAL_FORMAT_SETTINGS}
+  LDecimalSeparator := FormatSettings.DecimalSeparator;
+  {$ELSE}
+  LDecimalSeparator := DecimalSeparator;
+  {$ENDIF}
+{$ENDIF}
+  if LDecimalSeparator <> '.' then
+    for I := 1 to Length(Result) do
+      if Result[I] = LDecimalSeparator then
+        Result[I] := '.';
+end;
+
+function StrToExtended(const S: string): Extended;
+var
+  E: Integer;
+  V: Extended;
+begin
+  V := 0;
+  Val(S, V, E);
+  if (S = '') or (E <> 0) then
+    raise ECnFloatFormatError.Create(SCnErrorExtendedInvalidFormat);
+  Result := V;
 end;
 
 end.

@@ -1255,10 +1255,6 @@ type
   TSHA3Type = (stSHA3_224, stSHA3_256, stSHA3_384, stSHA3_512, stSHAKE128, stSHAKE256);
 
 const
-  MAX_FILE_SIZE = 512 * 1024 * 1024;
-  STREAM_BUF_SIZE = 4096 * 1024;
-  // If file size <= this size (bytes), using Mapping, else stream
-
   SHA3_ROUNDS = 24;
   SHA3_STATE_LEN = 25;
 
@@ -1420,6 +1416,9 @@ procedure SHA3Update(var Context: TCnSHA3Context; Input: PAnsiChar; ByteLength: 
 var
   R, Idx: Cardinal;
 begin
+  if Context.BlockLen = 0 then                          // 避免 Final 后再 Update 出错
+    Exit;
+
   Idx := Context.Index;                                 // Index 是 Block 中的初始位置指针
   repeat
     if ByteLength < Context.BlockLen - Idx then
@@ -1473,10 +1472,17 @@ end;
 // SHA3_224/256/384/512 专用
 procedure SHA3Final(var Context: TCnSHA3Context; var Digest: TCnSHA3GeneralDigest); overload;
 begin
+  if Context.BlockLen = 0 then        // 避免 Final 后再次 Final 时 BlockLen - 1 下标越界
+  begin
+    // 上下文已被此前的 Final 擦除，置零输出，避免包装层 Move 出未初始化内容
+    FillChar(Digest[0], SizeOf(Digest), 0);
+    Exit;
+  end;
   Context.Block[Context.Index] := 6;
   Context.Block[Context.BlockLen - 1] := Context.Block[Context.BlockLen - 1] or $80;
   SHA3_Transform(Context);
   Move(Context.State[0], Digest[0], Context.DigestLen);
+  MemorySafeZero(@Context, SizeOf(Context));
 end;
 
 // SHAKE128 和 SHAKE256 专用
@@ -1484,6 +1490,8 @@ procedure SHA3Final(var Context: TCnSHA3Context; out Digest: TBytes); overload;
 var
   Idx, DL: Cardinal;
 begin
+  if Context.BlockLen = 0 then        // 避免 Final 后再次 Final 时 BlockLen - 1 下标越界
+    Exit;
   Context.Block[Context.Index] := $1F;
   Context.Block[Context.BlockLen - 1] := Context.Block[Context.BlockLen - 1] or $80;
   SHA3_Transform(Context);
@@ -1512,6 +1520,7 @@ begin
     if DL > 0 then
       Move(Context.State[0], Digest[Idx], DL);
   end;
+  MemorySafeZero(@Context, SizeOf(Context));
 end;
 
 function SHAKE3Squeeze(var Context: TCnSHA3Context; DigestByteLength: Integer): TBytes;
@@ -1527,6 +1536,11 @@ begin
   end;
 
   BlockLen := Context.BlockLen;
+  if BlockLen = 0 then                // 避免 Final 后再 Squeeze 出错
+  begin
+    Result := nil;
+    Exit;
+  end;
 
   // 如果是第一次进入，先完成 Absorb 阶段
   if Context.Squeezed = 0 then
@@ -1536,6 +1550,14 @@ begin
     SHA3_Transform(Context);
     Context.Squeezed := 1;     // 标记已经完成吸收阶段
     Context.SqueezeCount := 0; // 重置挤压计数
+  end
+  else if Context.SqueezeCount >= BlockLen then
+  begin
+    // 上轮 Squeeze 恰好用完整块时计数停在 BlockLen，此处须先换块，
+    // 否则本次 BytesToCopy 恒为 0，循环永不退出
+    FillChar(Context.Block[0], SizeOf(Context.Block), 0);
+    SHA3_Transform(Context);
+    Context.SqueezeCount := 0;
   end;
 
   // 初始化输出数组
@@ -2174,15 +2196,18 @@ begin
   Size := Stream.Size;
   SavePos := Stream.Position;
   TotalBytes := 0;
+  CancelCalc := False;
+  SHA3Init(Context, SHA3Type);
   if Size = 0 then
+  begin
+    SHA3Final(Context, D);
+    Result := True;
     Exit;
+  end;
   if Size < BufSize then
     BufLen := Size
   else
     BufLen := BufSize;
-
-  CancelCalc := False;
-  SHA3Init(Context, SHA3Type);
 
   GetMem(Buf, BufLen);
   try
@@ -2228,15 +2253,18 @@ begin
   Size := Stream.Size;
   SavePos := Stream.Position;
   TotalBytes := 0;
+  CancelCalc := False;
+  SHA3Init(Context, SHA3Type, DigestByteLength);
   if Size = 0 then
+  begin
+    SHA3Final(Context, D);
+    Result := True;
     Exit;
+  end;
   if Size < BufSize then
     BufLen := Size
   else
     BufLen := BufSize;
-
-  CancelCalc := False;
-  SHA3Init(Context, SHA3Type, DigestByteLength);
 
   GetMem(Buf, BufLen);
   try
@@ -2270,7 +2298,7 @@ function SHA3_224Stream(Stream: TStream; CallBack: TCnSHA3CalcProgressFunc):
 var
   Dig: TCnSHA3GeneralDigest;
 begin
-  InternalSHA3Stream(Stream, STREAM_BUF_SIZE, Dig, stSHA3_224, CallBack);
+  InternalSHA3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA3_224, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA3_224Digest));
 end;
 
@@ -2280,7 +2308,7 @@ function SHA3_256Stream(Stream: TStream; CallBack: TCnSHA3CalcProgressFunc):
 var
   Dig: TCnSHA3GeneralDigest;
 begin
-  InternalSHA3Stream(Stream, STREAM_BUF_SIZE, Dig, stSHA3_256, CallBack);
+  InternalSHA3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA3_256, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA3_256Digest));
 end;
 
@@ -2290,7 +2318,7 @@ function SHA3_384Stream(Stream: TStream; CallBack: TCnSHA3CalcProgressFunc):
 var
   Dig: TCnSHA3GeneralDigest;
 begin
-  InternalSHA3Stream(Stream, STREAM_BUF_SIZE, Dig, stSHA3_384, CallBack);
+  InternalSHA3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA3_384, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA3_384Digest));
 end;
 
@@ -2300,7 +2328,7 @@ function SHA3_512Stream(Stream: TStream; CallBack: TCnSHA3CalcProgressFunc):
 var
   Dig: TCnSHA3GeneralDigest;
 begin
-  InternalSHA3Stream(Stream, STREAM_BUF_SIZE, Dig, stSHA3_512, CallBack);
+  InternalSHA3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA3_512, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA3_512Digest));
 end;
 
@@ -2308,14 +2336,14 @@ end;
 function SHAKE128Stream(Stream: TStream; DigestByteLength: Cardinal;
   CallBack: TCnSHA3CalcProgressFunc): TBytes;
 begin
-  InternalSHA3Stream(Stream, STREAM_BUF_SIZE, stSHAKE128, DigestByteLength, Result, CallBack);
+  InternalSHA3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, stSHAKE128, DigestByteLength, Result, CallBack);
 end;
 
 // 对指定数据流进行杂凑长度可变的 SHAKE256 计算
 function SHAKE256Stream(Stream: TStream; DigestByteLength: Cardinal;
   CallBack: TCnSHA3CalcProgressFunc): TBytes;
 begin
-  InternalSHA3Stream(Stream, STREAM_BUF_SIZE, stSHAKE256, DigestByteLength, Result, CallBack);
+  InternalSHA3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, stSHAKE256, DigestByteLength, Result, CallBack);
 end;
 
 function FileSizeIsLargeThanMaxOrCanNotMap(const AFileName: string; out IsEmpty: Boolean): Boolean;
@@ -2341,10 +2369,11 @@ begin
   end;
   Rec.Lo := Info.nFileSizeLow;
   Rec.Hi := Info.nFileSizeHigh;
-  Result := (Rec.Hi > 0) or (Rec.Lo > MAX_FILE_SIZE);
+  Result := (Rec.Hi > 0) or (Rec.Lo > CN_CRYPTO_MAX_FILE_SIZE_MAPPING);
   IsEmpty := (Rec.Hi = 0) and (Rec.Lo = 0);
 {$ELSE}
   Result := True; // 非 Windows 平台返回 True，表示不 Mapping
+  IsEmpty := False;
 {$ENDIF}
 end;
 
@@ -2366,7 +2395,7 @@ begin
     // 大于 2G 的文件可能 Map 失败，采用流方式循环处理
     Stream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
     try
-      InternalSHA3Stream(Stream, STREAM_BUF_SIZE, Result, SHA3Type, CallBack);
+      InternalSHA3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Result, SHA3Type, CallBack);
     finally
       Stream.Free;
     end;
@@ -2434,7 +2463,7 @@ begin
     // 大于 2G 的文件可能 Map 失败，采用流方式循环处理
     Stream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
     try
-      InternalSHA3Stream(Stream, STREAM_BUF_SIZE, SHA3Type, DigestByteLength, Result, CallBack);
+      InternalSHA3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, SHA3Type, DigestByteLength, Result, CallBack);
     finally
       Stream.Free;
     end;
@@ -2774,52 +2803,76 @@ procedure SHA3_224HmacFinal(var Context: TCnSHA3Context; var Output: TCnSHA3Gene
 var
   Len: Integer;
   TmpBuf: TCnSHA3GeneralDigest;
+  OP: array[0..143] of Byte;
+  OldDigestLen: Cardinal;
 begin
   Len := HMAC_SHA3_224_OUTPUT_LENGTH_BYTE;
+  OldDigestLen := Context.DigestLen;
+  Move(Context.Opad[0], OP[0], HMAC_SHA3_224_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA3Final(Context, TmpBuf);
   SHA3Init(Context, stSHA3_224);
+  Move(OP[0], Context.Opad[0], HMAC_SHA3_224_BLOCK_SIZE_BYTE);
   SHA3Update(Context, @(Context.Opad[0]), HMAC_SHA3_224_BLOCK_SIZE_BYTE);
   SHA3Update(Context, @(TmpBuf[0]), Len);
   SHA3Final(Context, Output);
+  Context.DigestLen := OldDigestLen; // Final 擦除了整个 Context，恢复 DigestLen 供调用方使用
 end;
 
 procedure SHA3_256HmacFinal(var Context: TCnSHA3Context; var Output: TCnSHA3GeneralDigest);
 var
   Len: Integer;
   TmpBuf: TCnSHA3GeneralDigest;
+  OP: array[0..143] of Byte;
+  OldDigestLen: Cardinal;
 begin
   Len := HMAC_SHA3_256_OUTPUT_LENGTH_BYTE;
+  OldDigestLen := Context.DigestLen;
+  Move(Context.Opad[0], OP[0], HMAC_SHA3_256_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA3Final(Context, TmpBuf);
   SHA3Init(Context, stSHA3_256);
+  Move(OP[0], Context.Opad[0], HMAC_SHA3_256_BLOCK_SIZE_BYTE);
   SHA3Update(Context, @(Context.Opad[0]), HMAC_SHA3_256_BLOCK_SIZE_BYTE);
   SHA3Update(Context, @(TmpBuf[0]), Len);
   SHA3Final(Context, Output);
+  Context.DigestLen := OldDigestLen; // Final 擦除了整个 Context，恢复 DigestLen 供调用方使用
 end;
 
 procedure SHA3_384HmacFinal(var Context: TCnSHA3Context; var Output: TCnSHA3GeneralDigest);
 var
   Len: Integer;
   TmpBuf: TCnSHA3GeneralDigest;
+  OP: array[0..143] of Byte;
+  OldDigestLen: Cardinal;
 begin
   Len := HMAC_SHA3_384_OUTPUT_LENGTH_BYTE;
+  OldDigestLen := Context.DigestLen;
+  Move(Context.Opad[0], OP[0], HMAC_SHA3_384_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA3Final(Context, TmpBuf);
   SHA3Init(Context, stSHA3_384);
+  Move(OP[0], Context.Opad[0], HMAC_SHA3_384_BLOCK_SIZE_BYTE);
   SHA3Update(Context, @(Context.Opad[0]), HMAC_SHA3_384_BLOCK_SIZE_BYTE);
   SHA3Update(Context, @(TmpBuf[0]), Len);
   SHA3Final(Context, Output);
+  Context.DigestLen := OldDigestLen; // Final 擦除了整个 Context，恢复 DigestLen 供调用方使用
 end;
 
 procedure SHA3_512HmacFinal(var Context: TCnSHA3Context; var Output: TCnSHA3GeneralDigest);
 var
   Len: Integer;
   TmpBuf: TCnSHA3GeneralDigest;
+  OP: array[0..143] of Byte;
+  OldDigestLen: Cardinal;
 begin
   Len := HMAC_SHA3_512_OUTPUT_LENGTH_BYTE;
+  OldDigestLen := Context.DigestLen;
+  Move(Context.Opad[0], OP[0], HMAC_SHA3_512_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA3Final(Context, TmpBuf);
   SHA3Init(Context, stSHA3_512);
+  Move(OP[0], Context.Opad[0], HMAC_SHA3_512_BLOCK_SIZE_BYTE);
   SHA3Update(Context, @(Context.Opad[0]), HMAC_SHA3_512_BLOCK_SIZE_BYTE);
   SHA3Update(Context, @(TmpBuf[0]), Len);
   SHA3Final(Context, Output);
+  Context.DigestLen := OldDigestLen; // Final 擦除了整个 Context，恢复 DigestLen 供调用方使用
 end;
 
 procedure SHA3_224Hmac(Key: PAnsiChar; KeyByteLength: Integer; Input: PAnsiChar;

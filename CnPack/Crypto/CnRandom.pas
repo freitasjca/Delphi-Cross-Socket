@@ -180,10 +180,13 @@ function CnRandomFloat: Extended;
    返回值：Extended                       - 满足 0 <= Result < 1 的随机浮点数
 }
 
-implementation
-
 resourcestring
   SCnErrorNoSecureRandom = 'NO Secure Random Generator!';
+  {* 随机数生成器出错信息}
+  SCnErrorInvalidRandomLength = 'Invalid Random Buffer Length: %d.';
+  {* 随机缓冲区长度非法}
+
+implementation
 
 {$IFDEF MSWINDOWS}
 
@@ -200,6 +203,10 @@ const
   BCRYPT_USE_SYSTEM_PREFERRED_RNG = $00000002;
   bcryptdll = 'bcrypt.dll';
 
+type
+  TBCryptGenRandomFunc = function(hAlgorithm: THandle; pbBuffer: Pointer;
+    cbBuffer: ULONG; dwFlags: ULONG): LongInt; stdcall;
+
 function CryptAcquireContext(phProv: PHandle; pszContainer: PAnsiChar;
   pszProvider: PAnsiChar; dwProvType: LongWord; dwFlags: LongWord): BOOL;
   stdcall; external ADVAPI32 name 'CryptAcquireContextA';
@@ -213,8 +220,32 @@ function CryptGenRandom(hProv: THandle; dwLen: LongWord; pbBuffer: PAnsiChar): B
 var
   FHProv: THandle = 0;
   FBCryptHandle: THandle = 0;
-  FBCryptGenRandom: function(hAlgorithm: THandle; pbBuffer: Pointer; cbBuffer: ULONG; dwFlags: ULONG): LongInt; stdcall = nil;
+  FBCryptGenRandom: TBCryptGenRandomFunc = nil;
   FBCryptInitAttempted: Boolean = False;
+  FBCryptCS: TRTLCriticalSection;
+  // Critical section to protect BCrypt initialization from race conditions
+
+function TryBCryptRandom(Buf: Pointer; BufByteLen: Integer): Boolean;
+var
+  Gen: TBCryptGenRandomFunc;
+begin
+  Result := False;
+  EnterCriticalSection(FBCryptCS);
+  try
+    if not FBCryptInitAttempted then
+    begin
+      FBCryptHandle := LoadLibrary(bcryptdll);
+      if FBCryptHandle <> 0 then
+        @FBCryptGenRandom := GetProcAddress(FBCryptHandle, 'BCryptGenRandom');
+      FBCryptInitAttempted := True;
+    end;
+    Gen := FBCryptGenRandom;
+    if Assigned(Gen) then
+      Result := Gen(0, Buf, BufByteLen, BCRYPT_USE_SYSTEM_PREFERRED_RNG) = 0;
+  finally
+    LeaveCriticalSection(FBCryptCS);
+  end;
+end;
 
 {$ELSE}
 
@@ -222,13 +253,22 @@ const
   DEV_FILE = '/dev/urandom';
 
 {$IFDEF LINUX}
+
 const
   libc = 'libc.so.6';
-function getrandom(buf: Pointer; buflen: NativeUInt; flags: Cardinal): Integer; cdecl; external libc name 'getrandom';
+  EINTR = 4;
+
+// Linux kernel 3.17/glibc 2.25 才加入 getrandom 函数，较老的版本如 UBuntu 16 等无法链接成功。
+function getrandom(Buf: Pointer; BufLen: NativeUInt; Flags: Cardinal): Integer; cdecl; external libc name 'getrandom';
+
+function __errno_location: PInteger; cdecl; external libc name '__errno_location';
+
 {$ENDIF}
 
 {$IFDEF MACOS}
-function CCRandomGenerateBytes(bytes: Pointer; count: NativeUInt): Integer; cdecl; external '/usr/lib/system/libcommonCrypto.dylib' name 'CCRandomGenerateBytes';
+
+function CCRandomGenerateBytes(Bytes: Pointer; Count: NativeUInt): Integer; cdecl; external '/usr/lib/system/libcommonCrypto.dylib' name 'CCRandomGenerateBytes';
+
 {$ENDIF}
 
 {$ENDIF}
@@ -241,28 +281,27 @@ var
   B: Boolean;
 {$ELSE}
   F: TFileStream;
+  BytesRead: Integer;
 {$IFDEF LINUX}
   R: Integer;
 {$ENDIF}
 {$ENDIF}
 begin
   Result := False;
+  if BufByteLen < 0 then
+    Exit;
+  if BufByteLen = 0 then
+  begin
+    Result := True;
+    Exit;
+  end;
+  if Buf = nil then
+    Exit;
 {$IFDEF MSWINDOWS}
   // 使用 Windows API 实现区块随机填充
-  if not FBCryptInitAttempted then
-  begin
-    FBCryptHandle := LoadLibrary(bcryptdll);
-    if FBCryptHandle <> 0 then
-      @FBCryptGenRandom := GetProcAddress(FBCryptHandle, 'BCryptGenRandom');
-    FBCryptInitAttempted := True;
-  end;
-
-  if Assigned(FBCryptGenRandom) then
-  begin
-    Result := FBCryptGenRandom(0, Buf, BufByteLen, BCRYPT_USE_SYSTEM_PREFERRED_RNG) = 0;
-    if Result then
-      Exit;
-  end;
+  Result := TryBCryptRandom(Buf, BufByteLen);
+  if Result then
+    Exit;
 
   // 降级
   HProv := 0;
@@ -300,8 +339,20 @@ begin
 {$ENDIF}
 {$IFDEF LINUX}
   try
-    R := getrandom(Buf, BufByteLen, 0);
-    Result := (R = BufByteLen);
+    while BufByteLen > 0 do
+    begin
+      R := getrandom(Buf, TCnNativeUInt(BufByteLen), 0);
+      if R > 0 then
+      begin
+        Dec(BufByteLen, R);
+        Inc(Buf, R);
+      end
+      else if (R < 0) and (__errno_location^ = EINTR) then
+        Continue
+      else
+        Break;
+    end;
+    Result := BufByteLen = 0;
     if Result then
       Exit;
   except
@@ -313,7 +364,18 @@ begin
   F := nil;
   try
     F := TFileStream.Create(DEV_FILE, fmOpenRead);
-    Result := F.Read(Buf^, BufByteLen) = BufByteLen;
+    Result := True;
+    while BufByteLen > 0 do
+    begin
+      BytesRead := F.Read(Buf^, BufByteLen);
+      if BytesRead <= 0 then
+      begin
+        Result := False;
+        Break;
+      end;
+      Dec(BufByteLen, BytesRead);
+      Inc(Buf, BytesRead);
+    end;
   finally
     F.Free;
   end;
@@ -324,28 +386,32 @@ function CnRandomFillBytes2(Buf: PAnsiChar; BufByteLen: Integer): Boolean;
 {$IFNDEF MSWINDOWS}
 var
   F: TFileStream;
+  BytesRead: Integer;
 {$IFDEF LINUX}
   R: Integer;
 {$ENDIF}
 {$ENDIF}
 begin
+  Result := False;
+  if BufByteLen < 0 then
+    Exit;
+  if BufByteLen = 0 then
+  begin
+    Result := True;
+    Exit;
+  end;
+  if Buf = nil then
+    Exit;
 {$IFDEF MSWINDOWS}
-  if not FBCryptInitAttempted then
-  begin
-    FBCryptHandle := LoadLibrary(bcryptdll);
-    if FBCryptHandle <> 0 then
-      @FBCryptGenRandom := GetProcAddress(FBCryptHandle, 'BCryptGenRandom');
-    FBCryptInitAttempted := True;
-  end;
+  Result := TryBCryptRandom(Buf, BufByteLen);
+  if Result then
+    Exit;
 
-  if Assigned(FBCryptGenRandom) then
-  begin
-    Result := FBCryptGenRandom(0, Buf, BufByteLen, BCRYPT_USE_SYSTEM_PREFERRED_RNG) = 0;
-    if Result then
-      Exit;
-  end;
-
-  Result := CryptGenRandom(FHProv, BufByteLen, Buf);
+  // 检查 FHProv 是否有效初始化，避免在句柄为 0 时调用 CryptGenRandom
+  if FHProv <> 0 then
+    Result := CryptGenRandom(FHProv, BufByteLen, Buf)
+  else
+    Result := False;
 {$ELSE}
 {$IFDEF MACOS}
   Result := CCRandomGenerateBytes(Buf, BufByteLen) = 0;
@@ -354,8 +420,20 @@ begin
 {$ENDIF}
 {$IFDEF LINUX}
   try
-    R := getrandom(Buf, BufByteLen, 0);
-    Result := (R = BufByteLen);
+    while BufByteLen > 0 do
+    begin
+      R := getrandom(Buf, TCnNativeUInt(BufByteLen), 0);
+      if R > 0 then
+      begin
+        Dec(BufByteLen, R);
+        Inc(Buf, R);
+      end
+      else if (R < 0) and (__errno_location^ = EINTR) then
+        Continue
+      else
+        Break;
+    end;
+    Result := BufByteLen = 0;
     if Result then
       Exit;
   except
@@ -367,7 +445,18 @@ begin
   F := nil;
   try
     F := TFileStream.Create(DEV_FILE, fmOpenRead);
-    Result := F.Read(Buf^, BufByteLen) = BufByteLen;
+    Result := True;
+    while BufByteLen > 0 do
+    begin
+      BytesRead := F.Read(Buf^, BufByteLen);
+      if BytesRead <= 0 then
+      begin
+        Result := False;
+        Break;
+      end;
+      Dec(BufByteLen, BytesRead);
+      Inc(Buf, BytesRead);
+    end;
   finally
     F.Free;
   end;
@@ -376,11 +465,17 @@ end;
 
 function CnRandomBytes(ByteLen: Integer): TBytes;
 begin
-  if ByteLen > 0 then
+  if ByteLen < 0 then
+    raise ECnRandomAPIError.CreateFmt(SCnErrorInvalidRandomLength, [ByteLen]);
+  if ByteLen = 0 then
   begin
-    SetLength(Result, ByteLen);
-    CnRandomFillBytes2(PAnsiChar(@Result[0]), ByteLen);
+    Result := nil;
+    Exit;
   end;
+
+  SetLength(Result, ByteLen);
+  if not CnRandomFillBytes2(PAnsiChar(@Result[0]), ByteLen) then
+    raise ECnRandomAPIError.Create(SCnErrorNoSecureRandom);
 end;
 
 function CnRandomFloat: Extended;
@@ -507,6 +602,9 @@ begin
   Result := False;
   if (ArrayBase = nil) or (ElementByteSize <= 0) or (ElementCount < 0) then // 超大的数组先不处理
     Exit;
+  if TCnNativeUInt(ElementCount) >
+    High(TCnNativeUInt) div TCnNativeUInt(ElementByteSize) then
+    Exit;
 
   Result := True;
   if ElementCount <= 1 then // 没元素或只有一个元素时不用洗
@@ -515,8 +613,10 @@ begin
   for I := ElementCount - 1 downto 0 do
   begin
     R := RandomInt32LessThan(I + 1);  // 0 到 I 这个闭区间内的随机数，所以上限要加 1
-    B1 := Pointer(TCnNativeUInt(ArrayBase) + TCnNativeUInt(I * ElementByteSize));
-    B2 := Pointer(TCnNativeUInt(ArrayBase) + TCnNativeUInt(R * ElementByteSize));
+    B1 := Pointer(TCnNativeUInt(ArrayBase) +
+      TCnNativeUInt(I) * TCnNativeUInt(ElementByteSize));
+    B2 := Pointer(TCnNativeUInt(ArrayBase) +
+      TCnNativeUInt(R) * TCnNativeUInt(ElementByteSize));
     MemorySwap(B1, B2, ElementByteSize);
   end;
   Result := True;
@@ -529,6 +629,7 @@ var
   Res: DWORD;
   B: Boolean;
 begin
+  InitializeCriticalSection(FBCryptCS);
   FHProv := 0;
   B := CryptAcquireContext(@FHProv, nil, nil, PROV_RSA_FULL, 0);
   if not B then
@@ -549,6 +650,7 @@ end;
 
 procedure StopRandom;
 begin
+  DeleteCriticalSection(FBCryptCS);
   if FHProv <> 0 then
   begin
     CryptReleaseContext(FHProv, 0);

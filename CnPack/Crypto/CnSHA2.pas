@@ -1258,9 +1258,6 @@ type
   TSHA2Type = (stSHA2_224, stSHA2_256, stSHA2_384, stSHA2_512, stSHA2_512_224, stSHA2_512_256);
 
 const
-  MAX_FILE_SIZE = 512 * 1024 * 1024;
-  // If file size <= this size (bytes), using Mapping, else stream
-
   KEYS256: array[0..63] of Cardinal = ($428A2F98, $71374491, $B5C0FBCF, $E9B5DBA5,
     $3956C25B, $59F111F1, $923F82A4, $AB1C5ED5, $D807AA98, $12835B01, $243185BE,
     $550C7DC3, $72BE5D74, $80DEB1FE, $9BDC06A7, $C19BF174, $E49B69C1, $EFBE4786,
@@ -1650,6 +1647,7 @@ begin
     Digest[I + 24] := (Context.State[6] shr (24 - I * 8)) and $000000FF;
     Digest[I + 28] := (Context.State[7] shr (24 - I * 8)) and $000000FF;
   end;
+  MemorySafeZero(@Context, SizeOf(Context));
 end;
 
 {$WARNINGS OFF}
@@ -1736,7 +1734,7 @@ begin
 
   RemainLength := NewLength mod 128;
   Input := PAnsiChar(TCnNativeUInt(Input) + (BlockCount shl 7));
-  Move(Input^, Context.Data[Context.DataLen], RemainLength);
+  Move(Input^, Context.Data[0], RemainLength);
 
   Context.DataLen := RemainLength;
   Inc(Context.TotalLen, (BlockCount + 1) shl 7);
@@ -1807,6 +1805,7 @@ begin
     Digest[I + 48] := (Context.State[6] shr (56 - I * 8)) and $000000FF;
     Digest[I + 56] := (Context.State[7] shr (56 - I * 8)) and $000000FF;
   end;
+  MemorySafeZero(@Context, SizeOf(Context));
 end;
 
 procedure SHA512_224Init(var Context: TCnSHA512_224Context);
@@ -2414,15 +2413,19 @@ begin
   Size := Stream.Size;
   SavePos := Stream.Position;
   TotalBytes := 0;
+  CancelCalc := False;
+  _SHAInit;
   if Size = 0 then
+  begin
+    _SHAFinal;
+    _CopyResult;
+    Result := True;
     Exit;
+  end;
   if Size < BufSize then
     BufLen := Size
   else
     BufLen := BufSize;
-
-  CancelCalc := False;
-  _SHAInit;
  
   GetMem(Buf, BufLen);
   try
@@ -2457,7 +2460,7 @@ function SHA224Stream(Stream: TStream; CallBack: TCnSHACalcProgressFunc):
 var
   Dig: TCnSHA2GeneralDigest;
 begin
-  InternalSHAStream(Stream, 4096 * 1024, Dig, stSHA2_224, CallBack);
+  InternalSHAStream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA2_224, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA224Digest));
 end;
 
@@ -2467,7 +2470,7 @@ function SHA256Stream(Stream: TStream; CallBack: TCnSHACalcProgressFunc):
 var
   Dig: TCnSHA2GeneralDigest;
 begin
-  InternalSHAStream(Stream, 4096 * 1024, Dig, stSHA2_256, CallBack);
+  InternalSHAStream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA2_256, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA256Digest));
 end;
 
@@ -2477,7 +2480,7 @@ function SHA384Stream(Stream: TStream; CallBack: TCnSHACalcProgressFunc):
 var
   Dig: TCnSHA2GeneralDigest;
 begin
-  InternalSHAStream(Stream, 4096 * 1024, Dig, stSHA2_384, CallBack);
+  InternalSHAStream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA2_384, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA384Digest));
 end;
 
@@ -2487,7 +2490,7 @@ function SHA512Stream(Stream: TStream; CallBack: TCnSHACalcProgressFunc):
 var
   Dig: TCnSHA2GeneralDigest;
 begin
-  InternalSHAStream(Stream, 4096 * 1024, Dig, stSHA2_512, CallBack);
+  InternalSHAStream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA2_512, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA512Digest));
 end;
 
@@ -2497,7 +2500,7 @@ function SHA512_224Stream(Stream: TStream; CallBack: TCnSHACalcProgressFunc):
 var
   Dig: TCnSHA2GeneralDigest;
 begin
-  InternalSHAStream(Stream, 4096 * 1024, Dig, stSHA2_512_224, CallBack);
+  InternalSHAStream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA2_512_224, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA512_224Digest));
 end;
 
@@ -2507,7 +2510,7 @@ function SHA512_256Stream(Stream: TStream; CallBack: TCnSHACalcProgressFunc):
 var
   Dig: TCnSHA2GeneralDigest;
 begin
-  InternalSHAStream(Stream, 4096 * 1024, Dig, stSHA2_512_256, CallBack);
+  InternalSHAStream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Dig, stSHA2_512_256, CallBack);
   Move(Dig[0], Result[0], SizeOf(TCnSHA512_256Digest));
 end;
 
@@ -2534,10 +2537,11 @@ begin
   end;
   Rec.Lo := Info.nFileSizeLow;
   Rec.Hi := Info.nFileSizeHigh;
-  Result := (Rec.Hi > 0) or (Rec.Lo > MAX_FILE_SIZE);
+  Result := (Rec.Hi > 0) or (Rec.Lo > CN_CRYPTO_MAX_FILE_SIZE_MAPPING);
   IsEmpty := (Rec.Hi = 0) and (Rec.Lo = 0);
 {$ELSE}
   Result := True; // 非 Windows 平台返回 True，表示不 Mapping
+  IsEmpty := False;
 {$ENDIF}
 end;
 
@@ -2646,7 +2650,7 @@ begin
     // 大于 2G 的文件可能 Map 失败，或非 Windows 平台，采用流方式循环处理
     Stream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
     try
-      InternalSHAStream(Stream, 4096 * 1024, Result, SHA2Type, CallBack);
+      InternalSHAStream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Result, SHA2Type, CallBack);
     finally
       Stream.Free;
     end;
@@ -2795,86 +2799,38 @@ end;
 
 // 比较两个 SHA224 杂凑值是否相等
 function SHA224Match(const D1, D2: TCnSHA224Digest): Boolean;
-var
-  I: Integer;
 begin
-  I := 0;
-  Result := True;
-  while Result and (I < 28) do
-  begin
-    Result := D1[I] = D2[I];
-    Inc(I);
-  end;
+  Result := ConstTimeCompareMem(@D1[0], @D2[0], SizeOf(TCnSHA224Digest));
 end;
 
 // 比较两个 SHA256 杂凑值是否相等
 function SHA256Match(const D1, D2: TCnSHA256Digest): Boolean;
-var
-  I: Integer;
 begin
-  I := 0;
-  Result := True;
-  while Result and (I < 32) do
-  begin
-    Result := D1[I] = D2[I];
-    Inc(I);
-  end;
+  Result := ConstTimeCompareMem(@D1[0], @D2[0], SizeOf(TCnSHA256Digest));
 end;
 
 // 比较两个 SHA384 杂凑值是否相等
 function SHA384Match(const D1, D2: TCnSHA384Digest): Boolean;
-var
-  I: Integer;
 begin
-  I := 0;
-  Result := True;
-  while Result and (I < 48) do
-  begin
-    Result := D1[I] = D2[I];
-    Inc(I);
-  end;
+  Result := ConstTimeCompareMem(@D1[0], @D2[0], SizeOf(TCnSHA384Digest));
 end;
 
 // 比较两个 SHA512 杂凑值是否相等
 function SHA512Match(const D1, D2: TCnSHA512Digest): Boolean;
-var
-  I: Integer;
 begin
-  I := 0;
-  Result := True;
-  while Result and (I < 64) do
-  begin
-    Result := D1[I] = D2[I];
-    Inc(I);
-  end;
+  Result := ConstTimeCompareMem(@D1[0], @D2[0], SizeOf(TCnSHA512Digest));
 end;
 
 // 比较两个 SHA512_224 杂凑值是否相等
 function SHA512_224Match(const D1, D2: TCnSHA512_224Digest): Boolean;
-var
-  I: Integer;
 begin
-  I := 0;
-  Result := True;
-  while Result and (I < 28) do
-  begin
-    Result := D1[I] = D2[I];
-    Inc(I);
-  end;
+  Result := ConstTimeCompareMem(@D1[0], @D2[0], SizeOf(TCnSHA512_224Digest));
 end;
 
 // 比较两个 SHA512_256 杂凑值是否相等
 function SHA512_256Match(const D1, D2: TCnSHA512_256Digest): Boolean;
-var
-  I: Integer;
 begin
-  I := 0;
-  Result := True;
-  while Result and (I < 32) do
-  begin
-    Result := D1[I] = D2[I];
-    Inc(I);
-  end;
+  Result := ConstTimeCompareMem(@D1[0], @D2[0], SizeOf(TCnSHA512_256Digest));
 end;
 
 // SHA224 杂凑值转 string
@@ -2948,10 +2904,13 @@ procedure SHA224HmacFinal(var Context: TCnSHA224Context; var Output: TCnSHA224Di
 var
   Len: Integer;
   TmpBuf: TCnSHA224Digest;
+  OP: array[0..63] of Byte;
 begin
   Len := HMAC_SHA2_224_OUTPUT_LENGTH_BYTE;
+  Move(Context.Opad[0], OP[0], HMAC_SHA2_224_256_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA224Final(Context, TmpBuf);
   SHA224Init(Context);
+  Move(OP[0], Context.Opad[0], HMAC_SHA2_224_256_BLOCK_SIZE_BYTE);
   SHA224Update(Context, @(Context.Opad[0]), HMAC_SHA2_224_256_BLOCK_SIZE_BYTE);
   SHA224Update(Context, @(TmpBuf[0]), Len);
   SHA224Final(Context, Output);
@@ -2992,10 +2951,13 @@ procedure SHA256HmacFinal(var Context: TCnSHA256Context; var Output: TCnSHA256Di
 var
   Len: Integer;
   TmpBuf: TCnSHA256Digest;
+  OP: array[0..63] of Byte;
 begin
   Len := HMAC_SHA2_256_OUTPUT_LENGTH_BYTE;
+  Move(Context.Opad[0], OP[0], HMAC_SHA2_224_256_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA256Final(Context, TmpBuf);
   SHA256Init(Context);
+  Move(OP[0], Context.Opad[0], HMAC_SHA2_224_256_BLOCK_SIZE_BYTE);
   SHA256Update(Context, @(Context.Opad[0]), HMAC_SHA2_224_256_BLOCK_SIZE_BYTE);
   SHA256Update(Context, @(TmpBuf[0]), Len);
   SHA256Final(Context, Output);
@@ -3074,10 +3036,13 @@ procedure SHA384HmacFinal(var Context: TCnSHA384Context; var Output: TCnSHA384Di
 var
   Len: Integer;
   TmpBuf: TCnSHA384Digest;
+  OP: array[0..127] of Byte;
 begin
   Len := HMAC_SHA2_384_OUTPUT_LENGTH_BYTE;
+  Move(Context.Opad[0], OP[0], HMAC_SHA2_384_512_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA384Final(Context, TmpBuf);
   SHA384Init(Context);
+  Move(OP[0], Context.Opad[0], HMAC_SHA2_384_512_BLOCK_SIZE_BYTE);
   SHA384Update(Context, @(Context.Opad[0]), HMAC_SHA2_384_512_BLOCK_SIZE_BYTE);
   SHA384Update(Context, @(TmpBuf[0]), Len);
   SHA384Final(Context, Output);
@@ -3137,10 +3102,13 @@ procedure SHA512HmacFinal(var Context: TCnSHA512Context; var Output: TCnSHA512Di
 var
   Len: Integer;
   TmpBuf: TCnSHA512Digest;
+  OP: array[0..127] of Byte;
 begin
   Len := HMAC_SHA2_512_OUTPUT_LENGTH_BYTE;
+  Move(Context.Opad[0], OP[0], HMAC_SHA2_384_512_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA512Final(Context, TmpBuf);
   SHA512Init(Context);
+  Move(OP[0], Context.Opad[0], HMAC_SHA2_384_512_BLOCK_SIZE_BYTE);
   SHA512Update(Context, @(Context.Opad[0]), HMAC_SHA2_384_512_BLOCK_SIZE_BYTE);
   SHA512Update(Context, @(TmpBuf[0]), Len);
   SHA512Final(Context, Output);
@@ -3200,10 +3168,13 @@ procedure SHA512_224HmacFinal(var Context: TCnSHA512_224Context; var Output: TCn
 var
   Len: Integer;
   TmpBuf: TCnSHA512_224Digest;
+  OP: array[0..127] of Byte;
 begin
   Len := HMAC_SHA2_512_224_OUTPUT_LENGTH_BYTE;
+  Move(Context.Opad[0], OP[0], HMAC_SHA2_384_512_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA512_224Final(Context, TmpBuf);
   SHA512_224Init(Context);
+  Move(OP[0], Context.Opad[0], HMAC_SHA2_384_512_BLOCK_SIZE_BYTE);
   SHA512_224Update(Context, @(Context.Opad[0]), HMAC_SHA2_384_512_BLOCK_SIZE_BYTE);
   SHA512_224Update(Context, @(TmpBuf[0]), Len);
   SHA512_224Final(Context, Output);
@@ -3263,10 +3234,13 @@ procedure SHA512_256HmacFinal(var Context: TCnSHA512_256Context; var Output: TCn
 var
   Len: Integer;
   TmpBuf: TCnSHA512_256Digest;
+  OP: array[0..127] of Byte;
 begin
   Len := HMAC_SHA2_512_256_OUTPUT_LENGTH_BYTE;
+  Move(Context.Opad[0], OP[0], HMAC_SHA2_384_512_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA512_256Final(Context, TmpBuf);
   SHA512_256Init(Context);
+  Move(OP[0], Context.Opad[0], HMAC_SHA2_384_512_BLOCK_SIZE_BYTE);
   SHA512_256Update(Context, @(Context.Opad[0]), HMAC_SHA2_384_512_BLOCK_SIZE_BYTE);
   SHA512_256Update(Context, @(TmpBuf[0]), Len);
   SHA512_256Final(Context, Output);

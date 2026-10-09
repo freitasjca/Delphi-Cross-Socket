@@ -279,9 +279,6 @@ const
     $7A879D8A, $7A879D8A, $7A879D8A, $7A879D8A, $7A879D8A, $7A879D8A, $7A879D8A, $7A879D8A
   );
 
-  MAX_FILE_SIZE = 512 * 1024 * 1024;
-  // If file size <= this size (bytes), using Mapping, else stream
-
   HMAC_SM3_BLOCK_SIZE_BYTE = 64;
   HMAC_SM3_OUTPUT_LENGTH_BYTE = 32;
 
@@ -492,8 +489,6 @@ begin
   Fill := 64 - Left;
 
   Context.Total[0] := Context.Total[0] + ByteLength;
-  Context.Total[0] := Context.Total[0] and $FFFFFFFF;
-
   if Context.Total[0] < ByteLength then
     Context.Total[1] := Context.Total[1] + 1;
 
@@ -546,6 +541,7 @@ begin
   PutULongBe(Context.State[5], @Digest, 20);
   PutULongBe(Context.State[6], @Digest, 24);
   PutULongBe(Context.State[7], @Digest, 28);
+  MemorySafeZero(@Context, SizeOf(Context));
 end;
 
 function SM3(Input: PAnsiChar; ByteLength: Cardinal): TCnSM3Digest;
@@ -591,10 +587,13 @@ procedure SM3HmacFinal(var Context: TCnSM3Context; var Output: TCnSM3Digest);
 var
   Len: Integer;
   TmpBuf: TCnSM3Digest;
+  OP: array[0..63] of Byte;
 begin
   Len := HMAC_SM3_OUTPUT_LENGTH_BYTE;
+  Move(Context.Opad[0], OP[0], HMAC_SM3_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SM3Final(Context, TmpBuf);
   SM3Init(Context);
+  Move(OP[0], Context.Opad[0], HMAC_SM3_BLOCK_SIZE_BYTE);
   SM3Update(Context, @(Context.Opad[0]), HMAC_SM3_BLOCK_SIZE_BYTE);
   SM3Update(Context, @(TmpBuf[0]), Len);
   SM3Final(Context, Output);
@@ -692,12 +691,19 @@ begin
   Size := Stream.Size;
   SavePos := Stream.Position;
   TotalBytes := 0;
-  if Size = 0 then Exit;
-  if Size < BufSize then BufLen := Size
-  else BufLen := BufSize;
-
   CancelCalc := False;
   SM3Init(Context);
+  if Size = 0 then
+  begin
+    SM3Final(Context, D);
+    Result := True;
+    Exit;
+  end;
+  if Size < BufSize then
+    BufLen := Size
+  else
+    BufLen := BufSize;
+
   GetMem(Buf, BufLen);
   try
     Stream.Position := 0;
@@ -722,6 +728,34 @@ begin
   end;
 end;
 
+function FileSizeIsLargeThanMaxOrCanNotMap(const FileName: string; out IsEmpty: Boolean): Boolean;
+{$IFDEF MSWINDOWS}
+var
+  H: THandle;
+  Info: BY_HANDLE_FILE_INFORMATION;
+  Rec : Int64Rec;
+{$ENDIF}
+begin
+{$IFDEF MSWINDOWS}
+  Result := False;
+  IsEmpty := False;
+  H := CreateFile(PChar(FileName), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, 0, 0);
+  if H = INVALID_HANDLE_VALUE then Exit;
+  try
+    if not GetFileInformationByHandle(H, Info) then Exit;
+  finally
+    CloseHandle(H);
+  end;
+  Rec.Lo := Info.nFileSizeLow;
+  Rec.Hi := Info.nFileSizeHigh;
+  Result := (Rec.Hi > 0) or (Rec.Lo > CN_CRYPTO_MAX_FILE_SIZE_MAPPING);
+  IsEmpty := (Rec.Hi = 0) and (Rec.Lo = 0);
+{$ELSE}
+  Result := True; // 非 Windows 平台返回 True，表示不 Mapping
+  IsEmpty := False;
+{$ENDIF}
+end;
+
 function SM3File(const FileName: string;
   CallBack: TCnSM3CalcProgressFunc): TCnSM3Digest;
 var
@@ -733,34 +767,6 @@ var
 {$ENDIF}
   Stream: TStream;
   FileIsZeroSize: Boolean;
-
-  function FileSizeIsLargeThanMaxOrCanNotMap(const AFileName: string; out IsEmpty: Boolean): Boolean;
-{$IFDEF MSWINDOWS}
-  var
-    H: THandle;
-    Info: BY_HANDLE_FILE_INFORMATION;
-    Rec : Int64Rec;
-{$ENDIF}
-  begin
-{$IFDEF MSWINDOWS}
-    Result := False;
-    IsEmpty := False;
-    H := CreateFile(PChar(FileName), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, 0, 0);
-    if H = INVALID_HANDLE_VALUE then Exit;
-    try
-      if not GetFileInformationByHandle(H, Info) then Exit;
-    finally
-      CloseHandle(H);
-    end;
-    Rec.Lo := Info.nFileSizeLow;
-    Rec.Hi := Info.nFileSizeHigh;
-    Result := (Rec.Hi > 0) or (Rec.Lo > MAX_FILE_SIZE);
-    IsEmpty := (Rec.Hi = 0) and (Rec.Lo = 0);
-{$ELSE}
-    Result := True; // 非 Windows 平台返回 True，表示不 Mapping
-{$ENDIF}
-  end;
-
 begin
   FileIsZeroSize := False;
   if FileSizeIsLargeThanMaxOrCanNotMap(FileName, FileIsZeroSize) then
@@ -768,7 +774,7 @@ begin
     // 大于 2G 的文件可能 Map 失败，或非 Windows 平台，，采用流方式循环处理
     Stream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
     try
-      InternalSM3Stream(Stream, 4096 * 1024, Result, CallBack);
+      InternalSM3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Result, CallBack);
     finally
       Stream.Free;
     end;
@@ -821,7 +827,7 @@ end;
 function SM3Stream(Stream: TStream;
   CallBack: TCnSM3CalcProgressFunc): TCnSM3Digest;
 begin
-  InternalSM3Stream(Stream, 4096 * 1024, Result, CallBack);
+  InternalSM3Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Result, CallBack);
 end;
 
 function SM3Print(const Digest: TCnSM3Digest): string;

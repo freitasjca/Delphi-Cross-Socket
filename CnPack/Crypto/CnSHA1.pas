@@ -26,6 +26,7 @@ unit CnSHA1;
 * 单元作者：CnPack 开发组 (master@cnpack.org)
 *           从匿名/佚名代码移植而来并补充部分功能。
 * 备    注：本单元实现了 SHA1 杂凑算法及对应的 HMAC 算法。
+*           注意，因 SHA1 算法本身已不再安全，本单元除必要的外部要求场合外，不建议使用。
 * 开发平台：PWin2000Pro + Delphi 5.0
 * 兼容测试：PWin9X/2000/XP + Delphi 5/6
 * 本 地 化：该单元中的字符串均符合本地化处理方式
@@ -265,9 +266,6 @@ function SHA1HmacBytes(const Key: TBytes; const Data: TBytes): TCnSHA1Digest;
 implementation
 
 const
-  MAX_FILE_SIZE = 512 * 1024 * 1024;
-  // If file size <= this size (bytes), using Mapping, else stream
-
   HMAC_SHA1_BLOCK_SIZE_BYTE = 64;
   HMAC_SHA1_OUTPUT_LENGTH_BYTE = 20;
 
@@ -451,6 +449,7 @@ begin
   Context.Hash[3] := RB(Context.Hash[3]);
   Context.Hash[4] := RB(Context.Hash[4]);
   Move(Context.Hash, Digest, Sizeof(Digest));
+  MemorySafeZero(@Context, SizeOf(Context));
 end;
 
 // 对数据块进行 SHA1 计算
@@ -540,12 +539,19 @@ begin
   Size := Stream.Size;
   SavePos := Stream.Position;
   TotalBytes := 0;
-  if Size = 0 then Exit;
-  if Size < BufSize then BufLen := Size
-  else BufLen := BufSize;
-
   CancelCalc := False;
   SHA1Init(Context);
+  if Size = 0 then
+  begin
+    SHA1Final(Context, D);
+    Result := True;
+    Exit;
+  end;
+  if Size < BufSize then
+    BufLen := Size
+  else
+    BufLen := BufSize;
+
   GetMem(Buf, BufLen);
   try
     Stream.Position := 0;
@@ -574,7 +580,35 @@ end;
 function SHA1Stream(Stream: TStream;
   CallBack: TCnSHA1CalcProgressFunc): TCnSHA1Digest;
 begin
-  InternalSHA1Stream(Stream, 4096 * 1024, Result, CallBack);
+  InternalSHA1Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Result, CallBack);
+end;
+
+function FileSizeIsLargeThanMaxOrCanNotMap(const FileName: string; out IsEmpty: Boolean): Boolean;
+{$IFDEF MSWINDOWS}
+var
+  H: THandle;
+  Info: BY_HANDLE_FILE_INFORMATION;
+  Rec : Int64Rec;
+{$ENDIF}
+begin
+{$IFDEF MSWINDOWS}
+  Result := False;
+  IsEmpty := False;
+  H := CreateFile(PChar(FileName), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, 0, 0);
+  if H = INVALID_HANDLE_VALUE then Exit;
+  try
+    if not GetFileInformationByHandle(H, Info) then Exit;
+  finally
+    CloseHandle(H);
+  end;
+  Rec.Lo := Info.nFileSizeLow;
+  Rec.Hi := Info.nFileSizeHigh;
+  Result := (Rec.Hi > 0) or (Rec.Lo > CN_CRYPTO_MAX_FILE_SIZE_MAPPING);
+  IsEmpty := (Rec.Hi = 0) and (Rec.Lo = 0);
+{$ELSE}
+  Result := True; // 非 Windows 平台返回 True，表示不 Mapping
+  IsEmpty := False;
+{$ENDIF}
 end;
 
 // 对指定文件数据进行 SHA1 计算
@@ -589,34 +623,6 @@ var
 {$ENDIF}
   Stream: TStream;
   FileIsZeroSize: Boolean;
-
-  function FileSizeIsLargeThanMaxOrCanNotMap(const AFileName: string; out IsEmpty: Boolean): Boolean;
-{$IFDEF MSWINDOWS}
-  var
-    H: THandle;
-    Info: BY_HANDLE_FILE_INFORMATION;
-    Rec : Int64Rec;
-{$ENDIF}
-  begin
-{$IFDEF MSWINDOWS}
-    Result := False;
-    IsEmpty := False;
-    H := CreateFile(PChar(FileName), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, 0, 0);
-    if H = INVALID_HANDLE_VALUE then Exit;
-    try
-      if not GetFileInformationByHandle(H, Info) then Exit;
-    finally
-      CloseHandle(H);
-    end;
-    Rec.Lo := Info.nFileSizeLow;
-    Rec.Hi := Info.nFileSizeHigh;
-    Result := (Rec.Hi > 0) or (Rec.Lo > MAX_FILE_SIZE);
-    IsEmpty := (Rec.Hi = 0) and (Rec.Lo = 0);
-{$ELSE}
-    Result := True; // 非 Windows 平台返回 True，表示不 Mapping
-{$ENDIF}
-  end;
-
 begin
   FileIsZeroSize := False;
   if FileSizeIsLargeThanMaxOrCanNotMap(FileName, FileIsZeroSize) then
@@ -624,7 +630,7 @@ begin
     // 大于 2G 的文件可能 Map 失败，或非 Windows 平台，采用流方式循环处理
     Stream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
     try
-      InternalSHA1Stream(Stream, 4096 * 1024, Result, CallBack);
+      InternalSHA1Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Result, CallBack);
     finally
       Stream.Free;
     end;
@@ -726,10 +732,13 @@ procedure SHA1HmacFinal(var Context: TCnSHA1Context; var Output: TCnSHA1Digest);
 var
   Len: Integer;
   TmpBuf: TCnSHA1Digest;
+  OP: array[0..63] of Byte;
 begin
   Len := HMAC_SHA1_OUTPUT_LENGTH_BYTE;
+  Move(Context.Opad[0], OP[0], HMAC_SHA1_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   SHA1Final(Context, TmpBuf);
   SHA1Init(Context);
+  Move(OP[0], Context.Opad[0], HMAC_SHA1_BLOCK_SIZE_BYTE);
   SHA1Update(Context, @(Context.Opad[0]), HMAC_SHA1_BLOCK_SIZE_BYTE);
   SHA1Update(Context, @(TmpBuf[0]), Len);
   SHA1Final(Context, Output);

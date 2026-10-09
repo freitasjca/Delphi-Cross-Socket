@@ -51,6 +51,7 @@ unit CnMD5;
 * 单元作者：何清（QSoft） hq.com@263.net; http://qsoft.51.net
 *           基于 Ronald L. Rivest 的 MD5.pas 改写，保留原始声明
 * 备    注：本单元实现了 MD5 杂凑算法及对应的 HMAC 算法。
+*           注意，因 MD5 算法本身已不再安全，本单元除必要的外部要求场合外，不建议使用。
 * 开发平台：PWin2000Pro + Delphi 5.0
 * 兼容测试：PWin9X/2000/XP + Delphi 5/6
 * 本 地 化：该单元中的字符串均符合本地化处理方式
@@ -303,9 +304,6 @@ function MD5HmacBytes(const Key: TBytes; const Data: TBytes): TCnMD5Digest;
 implementation
 
 const
-  MAX_FILE_SIZE = 512 * 1024 * 1024;
-  // If file size <= this size (bytes), using Mapping, else stream
-
   HMAC_MD5_BLOCK_SIZE_BYTE = 64;
   HMAC_MD5_OUTPUT_LENGTH_BYTE = 16;
 
@@ -596,6 +594,7 @@ begin
   MD5Update(Context, @PADDING, PadLen);
   MD5Update(Context, @Bits, 8);
   Decode(@Context.State, @Digest, 4);
+  MemorySafeZero(@Context, SizeOf(Context));
 end;
 
 function InternalMD5Stream(Stream: TStream; const BufSize: Cardinal; var D:
@@ -612,19 +611,20 @@ var
 begin
   Result := False;
   Size := Stream.Size;
-  if Size = 0 then
-    Exit;
-
   SavePos := Stream.Position;
   TotalBytes := 0;
-
+  CancelCalc := False;
+  MD5Init(Context);
+  if Size = 0 then
+  begin
+    MD5Final(Context, D);
+    Result := True;
+    Exit;
+  end;
   if Size < BufSize then
     BufLen := Size
   else
     BufLen := BufSize;
-
-  CancelCalc := False;
-  MD5Init(Context);
   GetMem(Buf, BufLen);
   try
     Stream.Position := 0;
@@ -721,6 +721,34 @@ begin
   MD5Final(Context, Result);
 end;
 
+function FileSizeIsLargeThanMaxOrCanNotMap(const FileName: string; out IsEmpty: Boolean): Boolean;
+{$IFDEF MSWINDOWS}
+var
+  H: THandle;
+  Info: BY_HANDLE_FILE_INFORMATION;
+  Rec : Int64Rec;
+{$ENDIF}
+begin
+{$IFDEF MSWINDOWS}
+  Result := False;
+  IsEmpty := False;
+  H := CreateFile(PChar(FileName), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, 0, 0);
+  if H = INVALID_HANDLE_VALUE then Exit;
+  try
+    if not GetFileInformationByHandle(H, Info) then Exit;
+  finally
+    CloseHandle(H);
+  end;
+  Rec.Lo := Info.nFileSizeLow;
+  Rec.Hi := Info.nFileSizeHigh;
+  Result := (Rec.Hi > 0) or (Rec.Lo > CN_CRYPTO_MAX_FILE_SIZE_MAPPING);
+  IsEmpty := (Rec.Hi = 0) and (Rec.Lo = 0);
+{$ELSE}
+  Result := True; // 非 Windows 平台返回 True，表示不 Mapping
+  IsEmpty := False;
+{$ENDIF}
+end;
+
 // 对指定文件内容进行 MD5 计算
 function MD5File(const FileName: string;
   CallBack: TCnMD5CalcProgressFunc): TCnMD5Digest;
@@ -733,34 +761,6 @@ var
 {$ENDIF}
   Stream: TStream;
   FileIsZeroSize: Boolean;
-
-  function FileSizeIsLargeThanMaxOrCanNotMap(const AFileName: string; out IsEmpty: Boolean): Boolean;
-{$IFDEF MSWINDOWS}
-  var
-    H: THandle;
-    Info: BY_HANDLE_FILE_INFORMATION;
-    Rec : Int64Rec;
-{$ENDIF}
-  begin
-{$IFDEF MSWINDOWS}
-    Result := False;
-    IsEmpty := False;
-    H := CreateFile(PChar(FileName), GENERIC_READ, FILE_SHARE_READ, nil, OPEN_EXISTING, 0, 0);
-    if H = INVALID_HANDLE_VALUE then Exit;
-    try
-      if not GetFileInformationByHandle(H, Info) then Exit;
-    finally
-      CloseHandle(H);
-    end;
-    Rec.Lo := Info.nFileSizeLow;
-    Rec.Hi := Info.nFileSizeHigh;
-    Result := (Rec.Hi > 0) or (Rec.Lo > MAX_FILE_SIZE);
-    IsEmpty := (Rec.Hi = 0) and (Rec.Lo = 0);
-{$ELSE}
-    Result := True; // 非 Windows 平台返回 True，表示不 Mapping
-{$ENDIF}
-  end;
-
 begin
   FileIsZeroSize := False;
   if FileSizeIsLargeThanMaxOrCanNotMap(FileName, FileIsZeroSize) then
@@ -768,7 +768,7 @@ begin
     // 大于 2G 的文件可能 Map 失败，或非 Windows 平台，采用流方式循环处理
     Stream := TFileStream.Create(FileName, fmOpenRead or fmShareDenyWrite);
     try
-      InternalMD5Stream(Stream, 4096 * 1024, Result, CallBack);
+      InternalMD5Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Result, CallBack);
     finally
       Stream.Free;
     end;
@@ -822,7 +822,7 @@ end;
 function MD5Stream(Stream: TStream;
   CallBack: TCnMD5CalcProgressFunc): TCnMD5Digest;
 begin
-  InternalMD5Stream(Stream, 4096 * 1024, Result, CallBack);
+  InternalMD5Stream(Stream, CN_CRYPTO_STREAM_BUF_SIZE, Result, CallBack);
 end;
 
 // 以十六进制格式输出 MD5 杂凑值
@@ -877,10 +877,13 @@ procedure MD5HmacFinal(var Context: TCnMD5Context; var Output: TCnMD5Digest);
 var
   Len: Integer;
   TmpBuf: TCnMD5Digest;
+  OP: array[0..63] of Byte;
 begin
   Len := HMAC_MD5_OUTPUT_LENGTH_BYTE;
+  Move(Context.Opad[0], OP[0], HMAC_MD5_BLOCK_SIZE_BYTE); // 保存 Opad 待继续使用
   MD5Final(Context, TmpBuf);
   MD5Init(Context);
+  Move(OP[0], Context.Opad[0], HMAC_MD5_BLOCK_SIZE_BYTE);
   MD5Update(Context, @(Context.Opad[0]), HMAC_MD5_BLOCK_SIZE_BYTE);
   MD5Update(Context, @(TmpBuf[0]), Len);
   MD5Final(Context, Output);

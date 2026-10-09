@@ -47,7 +47,9 @@ unit CnBase64;
 * 开发平台：PWin2003Std + Delphi 6.0
 * 兼容测试：暂未进行
 * 本 地 化：该单元无需本地化处理
-* 修改记录：2026.05.11 V1.7
+* 修改记录：2026.10.05 V1.8
+*               将 FixZero 参数默认改为 False
+*           2026.05.11 V1.7
 *               加入 Base32 的编解码实现
 *           2023.10.04 V1.6
 *               删除慢速实现。Base64Encode 与 Base64Decode 支持 Base64URL 的编码与解码
@@ -140,7 +142,7 @@ function Base64Encode(const InputData: TBytes; var OutputData: string;
 }
 
 function Base64Decode(const InputData: string; OutputData: TStream;
-  FixZero: Boolean = True): Integer; overload;
+  FixZero: Boolean = False): Integer; overload;
 {* 对字符串进行 Base64 解码（包括 Base64URL 解码），结果写入流。如解码成功返回 ECN_BASE64_OK。
 
    参数：
@@ -152,7 +154,7 @@ function Base64Decode(const InputData: string; OutputData: TStream;
 }
 
 function Base64Decode(const InputData: string; var OutputData: AnsiString;
-  FixZero: Boolean = True): Integer; overload;
+  FixZero: Boolean = False): Integer; overload;
 {* 对字符串进行 Base64 解码（包括 Base64URL 解码），结果写入字符串。如解码成功返回 ECN_BASE64_OK。
 
    参数：
@@ -164,7 +166,7 @@ function Base64Decode(const InputData: string; var OutputData: AnsiString;
 }
 
 function Base64Decode(const InputData: string; OutputData: Pointer;
-  DataByteLen: Integer; FixZero: Boolean = True): Integer; overload;
+  DataByteLen: Integer; FixZero: Boolean = False): Integer; overload;
 {* 对字符串进行 Base64 解码（包括 Base64URL 解码），结果写入内存区。如解码成功返回 ECN_BASE64_OK。
 
    参数：
@@ -177,7 +179,7 @@ function Base64Decode(const InputData: string; OutputData: Pointer;
 }
 
 function Base64Decode(const InputData: string; out OutputData: TBytes;
-  FixZero: Boolean = True): Integer; overload;
+  FixZero: Boolean = False): Integer; overload;
 {* 对字符串进行 Base64 解码（包括 Base64URL 解码），结果写入字节数组。如解码成功返回 ECN_BASE64_OK。
 
    参数：
@@ -337,7 +339,7 @@ var
 //------------------------------------------------------------------------------
 
   { 不包含在 Base64 里面的字符直接给零，反正也取不到}
-  DecodeTable64: array[#0..#127] of Byte =
+  DecodeTable64: array[0..255] of Byte =
   (
     Byte('='), 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
     00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
@@ -346,7 +348,15 @@ var
     00, 00, 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14,
     15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 00, 00, 00, 00, 63,  // _ 补上 63
     00, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 00, 00, 00, 00, 00
+    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 00, 00, 00, 00, 00,
+    00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+    00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+    00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+    00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+    00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+    00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+    00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00,
+    00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00
   );
 
 // 以下为 wr960204 改进的快速 Base64 编解码算法
@@ -569,6 +579,16 @@ begin
 {$ENDIF}
   end;
 
+  // 过滤（FilterLine）后可能得到空串，例如输入全部为非法字符。
+  // 此时必须直接返回空结果，否则后续 Data[SrcLen] 等价于对 nil AnsiString 取下标
+  // （SrcLen=0 时访问 Data[0]），将触发空指针访问崩溃，且可被外部构造的输入远程触发。
+  if Data = '' then
+  begin
+    SetLength(OutputData, 0);
+    Result := ECN_BASE64_OK;
+    Exit;
+  end;
+
   // 如果是 Base64URL 编码的结果去掉了尾部的 =，则需要根据长度是否是 4 的倍数而补上
   if (Length(Data) and $03) <> 0 then
     Data := Data + StringOfChar(AnsiChar('='), 4 - (Length(Data) and $03));
@@ -592,10 +612,10 @@ begin
 
   for I := 0 to Times - 1 do
   begin
-    X1 := DecodeTable64[Data[1 + I shl 2]];
-    X2 := DecodeTable64[Data[2 + I shl 2]];
-    X3 := DecodeTable64[Data[3 + I shl 2]];
-    X4 := DecodeTable64[Data[4 + I shl 2]];
+    X1 := DecodeTable64[Byte(Data[1 + I shl 2])];
+    X2 := DecodeTable64[Byte(Data[2 + I shl 2])];
+    X3 := DecodeTable64[Byte(Data[3 + I shl 2])];
+    X4 := DecodeTable64[Byte(Data[4 + I shl 2])];
     X1 := Byte(X1 shl 2);
     XT := Byte(X2 shr 4);
     X1 := Byte(X1 or XT);
@@ -616,8 +636,8 @@ begin
     Inc(C);
   end;
 
-  // 根据补的等号数目决定是否删除尾部 #0
-  while (ToDec > 0) and (OutputData[DstLen - 1] = 0) do
+  // 根据补的等号数目决定是否删除尾部 #0（补 DstLen > 0 条件防止空输出数组时的负下标访问）
+  while (ToDec > 0) and (DstLen > 0) and (OutputData[DstLen - 1] = 0) do
   begin
     Dec(ToDec);
     Dec(DstLen);
@@ -635,7 +655,8 @@ begin
   Result := ECN_BASE64_OK;
 end;
 
-function Base64Decode(const InputData: string; var OutputData: AnsiString; FixZero: Boolean): Integer;
+function Base64Decode(const InputData: string; var OutputData: AnsiString;
+  FixZero: Boolean): Integer;
 var
   Data: TBytes;
 begin

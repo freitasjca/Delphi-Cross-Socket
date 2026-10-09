@@ -56,8 +56,8 @@ type
   TCnKeyDeriveHash = (ckdMd5, ckdSha256, ckdSha1);
   {* CnGetDeriveKey 中使用的杂凑方法}
 
-  TCnPBKDF1KeyHash = (cpdfMd2, cpdfMd5, cpdfSha1);
-  {* PBKDF1 规定的三种杂凑方法，其中 MD2 我们不支持}
+  TCnPBKDF1KeyHash = (cpdfMd2, cpdfMd5, cpdfSha1, cpdfSha256);
+  {* PBKDF1 规定的几种杂凑方法，其中 MD2 我们不支持}
 
   TCnPBKDF2KeyHash = (cpdfSha1Hmac, cpdfSha256Hmac);
   {* PBKDF2 规定的两种杂凑方法}
@@ -70,8 +70,10 @@ type
 
 function CnGetDeriveKey(const Password: AnsiString; const Salt: AnsiString;
   OutKey: PAnsiChar; KeyLength: Cardinal; KeyHash: TCnKeyDeriveHash = ckdMd5): Boolean;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 类似于 Openssl 中的 BytesToKey，用密码和盐与指定的杂凑算法生成加密 Key，
    目前的限制是 KeyLength 最多支持两轮 Hash，也就是 MD5 32 字节，SHA256 64 字节。
+   因强度不够已不推荐使用。
 
    参数：
      const Password: AnsiString           - 明文密码
@@ -85,8 +87,10 @@ function CnGetDeriveKey(const Password: AnsiString; const Salt: AnsiString;
 
 function CnPBKDF1(const Password: AnsiString; const Salt: AnsiString; Count: Integer;
   DerivedKeyByteLength: Integer; KeyHash: TCnPBKDF1KeyHash = cpdfMd5): AnsiString;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* Password Based KDF 1 实现，简单的固定杂凑迭代，只支持 MD5 和 SHA1，参数与返回值均为 AnsiString。
    DerivedKeyByteLength 是所需的密钥字节数，长度固定。
+   因强度不够已不推荐使用。
 
    参数：
      const Password: AnsiString           - 明文密码
@@ -376,11 +380,12 @@ begin
 end;
 
 function CnPBKDF1Bytes(const Password, Salt: TBytes; Count, DerivedKeyByteLength: Integer;
-  KeyHash: TCnPBKDF1KeyHash = cpdfMd5): TBytes;
+  KeyHash: TCnPBKDF1KeyHash): TBytes;
 var
   I: Integer;
   Md5Dig, TM: TCnMD5Digest;
   Sha1Dig, TS: TCnSHA1Digest;
+  Sha256Dig, TS256: TCnSHA256Digest;
 begin
   Result := nil;
   if (Password = nil) or (Count <= 0) or (DerivedKeyByteLength <= 0) then
@@ -423,13 +428,31 @@ begin
 
         Move(Sha1Dig[0], Result[0], DerivedKeyByteLength);
       end;
+    cpdfSha256:
+      begin
+        if DerivedKeyByteLength > SizeOf(TCnSHA256Digest) then
+          raise ECnKDFException.Create(SCnErrorKDFKeyTooLong);
+
+        SetLength(Result, DerivedKeyByteLength);
+        Sha256Dig := SHA256Bytes(ConcatBytes(Password, Salt));  // Got T1
+        if Count > 1 then
+        begin
+          for I := 2 to Count do
+          begin
+            TS256 := Sha256Dig;
+            Sha256Dig := SHA256Buffer(TS256[0], SizeOf(TCnSHA256Digest)); // Got T_c
+          end;
+        end;
+
+        Move(Sha256Dig[0], Result[0], DerivedKeyByteLength);
+      end;
     else
       raise ECnKDFException.Create(SCnErrorKDFHashNOTSupport);
   end;
 end;
 
 function CnPBKDF2Bytes(const Password, Salt: TBytes; Count, DerivedKeyByteLength: Integer;
-  KeyHash: TCnPBKDF2KeyHash = cpdfSha1Hmac): TBytes;
+  KeyHash: TCnPBKDF2KeyHash): TBytes;
 var
   HLen, D, I, J, K: Integer;
   Sha1Dig1, Sha1Dig, T1: TCnSHA1Digest;
@@ -438,7 +461,7 @@ var
   PAddr: Pointer;
 begin
   Result := nil;
-  if (Salt = nil) or (Count <= 0) or (DerivedKeyByteLength <=0) then
+  if (Count <= 0) or (DerivedKeyByteLength <= 0) then
     raise ECnKDFException.Create(SCnErrorKDFParam);
 
   if (Password = nil) or (Length(Password) = 0) then
@@ -755,7 +778,9 @@ begin
       chkSha3_256:  Move(Sha3256T[0], T[0], HashLen);
       chkSm3:       Move(Sm3T[0], T[0], HashLen);
     end;
-    Move(Info^, T[HashLen], InfoByteLen);
+
+    if InfoByteLen > 0 then
+      Move(Info^, T[HashLen], InfoByteLen);
     T[HashLen + InfoByteLen] := I + 1;
 
     // 计算杂凑 T2 搁回 T1

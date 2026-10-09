@@ -27,7 +27,7 @@ unit CnDES;
 *           由匿名/佚名代码移植而来并补充部分功能。
 * 备    注：本单元实现了 DES/3DES 对称加解密算法，分块大小 8 字节，块运算实现了
 *           ECB/CBC 模式，不支持其他块运算模式。
-*
+*           注意，因 DES/3DES 算法本身已不再安全，本单元除必要的外部要求场合外，不建议使用。
 * 开发平台：PWin2000Pro + Delphi 5.0
 * 兼容测试：PWin9X/2000/XP + Delphi 5/6
 * 本 地 化：该单元中的字符串均符合本地化处理方式
@@ -107,6 +107,7 @@ function DESGetOutputLengthFromInputLength(InputByteLength: Integer): Integer;
 }
 
 procedure DESEncryptEcbStr(Key: AnsiString; const Input: AnsiString; Output: PAnsiChar);
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对 AnsiString 的 DES 加密，块间使用 ECB 模式。
 
    参数：
@@ -118,6 +119,7 @@ procedure DESEncryptEcbStr(Key: AnsiString; const Input: AnsiString; Output: PAn
 }
 
 procedure DESDecryptEcbStr(Key: AnsiString; const Input: AnsiString; Output: PAnsiChar);
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对 AnsiString 的 DES 解密，块间使用 ECB 模式。
 
    参数：
@@ -155,6 +157,7 @@ procedure DESDecryptCbcStr(Key: AnsiString; Iv: PAnsiChar; const Input: AnsiStri
 }
 
 function DESEncryptEcbStrToHex(const Str: AnsiString; const Key: AnsiString): AnsiString;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 传入明文与加密 Key，DES 加密返回转换成十六进制的密文，块间使用 ECB 模式，明文末尾可能补 #0。
 
    参数：
@@ -165,6 +168,7 @@ function DESEncryptEcbStrToHex(const Str: AnsiString; const Key: AnsiString): An
 }
 
 function DESDecryptEcbStrFromHex(const HexStr: AnsiString; const Key: AnsiString): AnsiString;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 传入十六进制的密文与加密 Key，DES 解密返回明文，块间使用 ECB 模式。
 
    参数：
@@ -174,7 +178,8 @@ function DESDecryptEcbStrFromHex(const HexStr: AnsiString; const Key: AnsiString
    返回值：AnsiString                     - 返回解密后的明文字符串
 }
 
-function DESEncryptCbcStrToHex(const Str: AnsiString; const Key: AnsiString; const Iv: AnsiString): AnsiString;
+function DESEncryptCbcStrToHex(const Str: AnsiString; const Key: AnsiString;
+  const Iv: AnsiString): AnsiString;
 {* 传入明文与加密 Key 与 Iv，DES 加密返回转换成十六进制的密文，块间使用 CBC 模式，明文末尾可能补 #0。
 
    参数：
@@ -198,6 +203,7 @@ function DESDecryptCbcStrFromHex(const HexStr: AnsiString; const Key: AnsiString
 }
 
 function DESEncryptEcbBytes(Key: TBytes; Input: TBytes): TBytes;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对字节数组的 DES 加密，块间使用 ECB 模式。
 
    参数：
@@ -208,6 +214,7 @@ function DESEncryptEcbBytes(Key: TBytes; Input: TBytes): TBytes;
 }
 
 function DESDecryptEcbBytes(Key: TBytes; Input: TBytes): TBytes;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对字节数组的 DES 解密，块间使用 ECB 模式。
 
    参数：
@@ -241,6 +248,7 @@ function DESDecryptCbcBytes(Key: TBytes; Iv: TBytes; Input: TBytes): TBytes;
 
 procedure DESEncryptStreamECB(Source: TStream; Count: Cardinal;
   const Key: TCnDESKey; Dest: TStream); overload;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对流的 DES 加密，块间使用 ECB 模式。
    Count 为 0 表示从头加密整个流，否则只加密 Stream 当前位置起 Count 的字节数。
 
@@ -255,6 +263,7 @@ procedure DESEncryptStreamECB(Source: TStream; Count: Cardinal;
 
 procedure DESDecryptStreamECB(Source: TStream; Count: Cardinal;
   const Key: TCnDESKey; Dest: TStream); overload;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对流的 DES 解密，块间使用 ECB 模式。
    Count 为 0 表示从头解密整个流，否则只解密 Stream 当前位置起 Count 的字节数。
 
@@ -308,7 +317,8 @@ function TripleDESGetOutputLengthFromInputLength(InputByteLength: Integer): Inte
    返回值：Integer                        - 返回 3DES 块对齐后的字节长度
 }
 
-procedure TripleDESEncryptEcbStr(Key: AnsiString; const Input: AnsiString; Output: PAnsiChar);
+procedure TripleDESEncryptEcbStr(Key: AnsiString; const Input: AnsiString;
+  Output: PAnsiChar); {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对 AnsiString 的 3DES 加密，块间使用 ECB 模式。
 
    参数：
@@ -319,7 +329,8 @@ procedure TripleDESEncryptEcbStr(Key: AnsiString; const Input: AnsiString; Outpu
    返回值：（无）
 }
 
-procedure TripleDESDecryptEcbStr(Key: AnsiString; const Input: AnsiString; Output: PAnsiChar);
+procedure TripleDESDecryptEcbStr(Key: AnsiString; const Input: AnsiString;
+  Output: PAnsiChar); {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对 AnsiString 的 3DES 解密，块间使用 ECB 模式。
 
    参数：
@@ -356,7 +367,8 @@ procedure TripleDESDecryptCbcStr(Key: AnsiString; Iv: PAnsiChar;
    返回值：（无）
 }
 
-function TripleDESEncryptEcbStrToHex(const Str: AnsiString; const Key: AnsiString): AnsiString;
+function TripleDESEncryptEcbStrToHex(const Str: AnsiString;
+  const Key: AnsiString): AnsiString; {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 传入明文与加密 Key，3DES 加密返回转换成十六进制的密文，块间使用 ECB 模式，明文末尾可能补 #0。
 
    参数：
@@ -366,7 +378,8 @@ function TripleDESEncryptEcbStrToHex(const Str: AnsiString; const Key: AnsiStrin
    返回值：AnsiString                     - 返回加密后的十六进制密文字符串
 }
 
-function TripleDESDecryptEcbStrFromHex(const HexStr: AnsiString; const Key: AnsiString): AnsiString;
+function TripleDESDecryptEcbStrFromHex(const HexStr: AnsiString;
+  const Key: AnsiString): AnsiString; {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 传入十六进制的密文与加密 Key，3DES 解密返回明文，块间使用 ECB 模式。
 
    参数：
@@ -401,6 +414,7 @@ function TripleDESDecryptCbcStrFromHex(const HexStr: AnsiString;
 }
 
 function TripleDESEncryptEcbBytes(Key: TBytes; Input: TBytes): TBytes;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对字节数组的 3DES 加密，块间使用 ECB 模式。
 
    参数：
@@ -411,6 +425,7 @@ function TripleDESEncryptEcbBytes(Key: TBytes; Input: TBytes): TBytes;
 }
 
 function TripleDESDecryptEcbBytes(Key: TBytes; Input: TBytes): TBytes;
+  {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对字节数组的 3DES 解密，块间使用 ECB 模式。
 
    参数：
@@ -443,7 +458,7 @@ function TripleDESDecryptCbcBytes(Key: TBytes; Iv: TBytes; Input: TBytes): TByte
 }
 
 procedure TripleDESEncryptStreamECB(Source: TStream; Count: Cardinal;
-  const Key: TCn3DESKey; Dest: TStream); overload;
+  const Key: TCn3DESKey; Dest: TStream); overload; {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对流的 3DES 加密，块间使用 ECB 模式。
    Count 为 0 表示从头加密整个流，否则只加密 Stream 当前位置起 Count 的字节数。
 
@@ -457,7 +472,7 @@ procedure TripleDESEncryptStreamECB(Source: TStream; Count: Cardinal;
 }
 
 procedure TripleDESDecryptStreamECB(Source: TStream; Count: Cardinal;
-  const Key: TCn3DESKey; Dest: TStream); overload;
+  const Key: TCn3DESKey; Dest: TStream); overload; {$IFDEF SUPPORT_DEPRECATED} deprecated; {$ENDIF}
 {* 针对流的 3DES 解密，块间使用 ECB 模式。
    Count 为 0 表示从头解密整个流，否则只解密 Stream 当前位置起 Count 的字节数。
 

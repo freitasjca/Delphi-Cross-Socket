@@ -231,6 +231,9 @@ type
     Value: Integer;
   end;
 
+  ECnAnsiStringHashSizeException = class(Exception);
+  {* ANSI 字符串哈希表大小错误异常}
+
   TCnAnsiStringHash = class
   private
     Buckets: array of PCnAnsiHashItem;
@@ -668,7 +671,7 @@ function CnStringReplace(const S: string; const OldPattern: string;
 
    参数：
      const S: string                      - 待替换的字符串
-     const OldPattern: string             - 待替换的字符串内容
+     const OldPattern: string             - 待替换的字符串内容，为空时不执行替换，原样返回 S
      const NewPattern: string             - 替换的字符串新内容
      Flags: TCnReplaceFlags               - 替换标记，支持整字匹配
 
@@ -683,7 +686,7 @@ function CnStringReplaceA(const S: AnsiString; const OldPattern: AnsiString;
 
    参数：
      const S: AnsiString                  - 待替换的单字节字符串
-     const OldPattern: AnsiString         - 待替换的单字节字符串内容
+     const OldPattern: AnsiString         - 待替换的单字节字符串内容，为空时不执行替换，原样返回 S
      const NewPattern: AnsiString         - 替换的单字节字符串新内容
      Flags: TCnReplaceFlags               - 替换标记，支持整字匹配
 
@@ -698,7 +701,7 @@ function CnStringReplaceW(const S: WideString; const OldPattern: WideString;
 
    参数：
      const S: WideString                  - 待替换的宽字符串
-     const OldPattern: WideString         - 待替换的宽字符串内容
+     const OldPattern: WideString         - 待替换的宽字符串内容，为空时不执行替换，原样返回 S
      const NewPattern: WideString         - 替换的宽字符串新内容
      Flags: TCnReplaceFlags               - 替换标记，支持整字匹配
 
@@ -737,6 +740,7 @@ resourcestring
   SListIndexError = 'AnsiString List index out of bounds (%d)';
   SSortedListError = 'Operation not allowed on sorted AnsiString list';
   SListCapacityError = 'Error New Capacity or Length Value %d';
+  SCnErrorAnsiStringHashSize = 'AnsiString Hash Size Must be Greater than Zero.';
 
 function NativeStringToUIString(const Str: string): string;
 begin
@@ -1305,27 +1309,38 @@ var
   S: AnsiString;
   P: PAnsiChar;
   I, Count: Integer;
+  SB: TCnStringBuilder;
 begin
   Count := GetCount;
   if (Count = 1) and (Get(0) = '') then
     Result := QuoteChar + QuoteChar
   else
   begin
-    Result := '';
-    for I := 0 to Count - 1 do
-    begin
-      S := Get(I);
-      P := PAnsiChar(S);
-      while not (P^ in [#0..' ', QuoteChar, Delimiter]) do
-      {$IFDEF MSWINDOWS}
-        P := CharNextA(P);
-      {$ELSE}
-        Inc(P);
-      {$ENDIF}
-      if (P^ <> #0) then S := AnsiString(AnsiQuotedStr(string(S), Char(QuoteChar)));
-      Result := Result + S + Delimiter;
+    SB := TCnStringBuilder.Create(True);
+    try
+      for I := 0 to Count - 1 do
+      begin
+        S := Get(I);
+        P := PAnsiChar(S);
+        while not (P^ in [#0..' ', QuoteChar, Delimiter]) do
+        {$IFDEF MSWINDOWS}
+          P := CharNextA(P);
+        {$ELSE}
+          Inc(P);
+        {$ENDIF}
+        if (P^ <> #0) then S := AnsiString(AnsiQuotedStr(string(S), Char(QuoteChar)));
+        {$IFDEF UNICODE}
+        SB.AppendAnsi(S).AppendAnsiChar(Delimiter);
+        {$ELSE}
+        SB.Append(S).AppendAnsiChar(Delimiter);
+        {$ENDIF}
+      end;
+      Result := SB.ToAnsiString;
+      if Length(Result) > 0 then
+        SetLength(Result, Length(Result) - 1);
+    finally
+      SB.Free;
     end;
-    System.Delete(Result, Length(Result), 1);
   end;
 end;
 
@@ -2044,6 +2059,8 @@ end;
 
 constructor TCnAnsiStringHash.Create(Size: Cardinal);
 begin
+  if Size = 0 then
+    raise ECnAnsiStringHashSizeException.Create(SCnErrorAnsiStringHashSize);
   inherited Create;
   SetLength(Buckets, Size);
 end;
@@ -2224,7 +2241,13 @@ var
   SearchStr, Patt, NewStr: string;
   Offset, TailOffset: Integer;
   IsWhole: Boolean;
+  SB: TCnStringBuilder;
 begin
+  if OldPattern = '' then
+  begin
+    Result := S;
+    Exit;
+  end;
   if crfIgnoreCase in Flags then
   begin
 {$IFDEF UNICODE}
@@ -2242,21 +2265,21 @@ begin
   end;
 
   NewStr := S;
-  Result := '';
-
-  while SearchStr <> '' do
-  begin
-{$IFDEF UNICODE}
-    Offset := Pos(Patt, SearchStr);
-{$ELSE}
-    Offset := AnsiPos(Patt, SearchStr);
-{$ENDIF}
-    IsWhole := True;
-    if Offset = 0 then
+  SB := TCnStringBuilder.Create;
+  try
+    while SearchStr <> '' do
     begin
-      Result := Result + NewStr;
-      Break;
-    end
+{$IFDEF UNICODE}
+      Offset := Pos(Patt, SearchStr);
+{$ELSE}
+      Offset := AnsiPos(Patt, SearchStr);
+{$ENDIF}
+      IsWhole := True;
+      if Offset = 0 then
+      begin
+        SB.Append(NewStr);
+        Break;
+      end
     else if crfWholeWord in Flags then
     begin
       // 找到了子串且需要整字匹配，须进行整字判断，不符合则当
@@ -2276,20 +2299,25 @@ begin
     if not (crfWholeWord in Flags) or IsWhole then // 普通匹配或整字匹配了
     begin
       // 替换一次
-      Result := Result + Copy(NewStr, 1, Offset - 1) + NewPattern;
+      SB.Append(Copy(NewStr, 1, Offset - 1)).Append(NewPattern);
       NewStr := Copy(NewStr, Offset + Length(OldPattern), MaxInt);
       if not (crfReplaceAll in Flags) then
       begin
-        Result := Result + NewStr;
+        SB.Append(NewStr);
         Break;
       end;
     end
     else // 整字匹配的要求下，未整字匹配，不能替换
     begin
-      Result := Result + Copy(NewStr, 1, Offset - 1) + OldPattern; // 注意必须用 OldePattern，不能替换
+      SB.Append(Copy(NewStr, 1, Offset - 1)).Append(
+        Copy(NewStr, Offset, Length(OldPattern))); // 必须保留原文片段的大小写
       NewStr := Copy(NewStr, Offset + Length(OldPattern), MaxInt);
     end;
     SearchStr := Copy(SearchStr, Offset + Length(Patt), MaxInt);
+  end;
+    Result := SB.ToString;
+  finally
+    SB.Free;
   end;
 end;
 
@@ -2301,7 +2329,13 @@ var
   SearchStr, Patt, NewStr: AnsiString;
   Offset, TailOffset: Integer;
   IsWhole: Boolean;
+  SB: TCnStringBuilder;
 begin
+  if OldPattern = '' then
+  begin
+    Result := S;
+    Exit;
+  end;
   if crfIgnoreCase in Flags then
   begin
     SearchStr := AnsiUpperCase(S);
@@ -2314,17 +2348,17 @@ begin
   end;
 
   NewStr := S;
-  Result := '';
-
-  while SearchStr <> '' do
-  begin
-    Offset := AnsiPos(Patt, SearchStr);
-    IsWhole := True;
-    if Offset = 0 then
+  SB := TCnStringBuilder.Create(True);
+  try
+    while SearchStr <> '' do
     begin
-      Result := Result + NewStr;
-      Break;
-    end
+      Offset := AnsiPos(Patt, SearchStr);
+      IsWhole := True;
+      if Offset = 0 then
+      begin
+        SB.AppendAnsi(NewStr);
+        Break;
+      end
     else if crfWholeWord in Flags then
     begin
       // 找到了子串且需要整字匹配，须进行整字判断，不符合则当
@@ -2344,20 +2378,25 @@ begin
     if not (crfWholeWord in Flags) or IsWhole then // 普通匹配或整字匹配了
     begin
       // 替换一次
-      Result := Result + Copy(NewStr, 1, Offset - 1) + NewPattern;
+      SB.AppendAnsi(Copy(NewStr, 1, Offset - 1)).AppendAnsi(NewPattern);
       NewStr := Copy(NewStr, Offset + Length(OldPattern), MaxInt);
       if not (crfReplaceAll in Flags) then
       begin
-        Result := Result + NewStr;
+        SB.AppendAnsi(NewStr);
         Break;
       end;
     end
     else // 整字匹配的要求下，未整字匹配，不能替换
     begin
-      Result := Result + Copy(NewStr, 1, Offset - 1) + OldPattern; // 注意必须用 OldePattern，不能替换
+      SB.AppendAnsi(Copy(NewStr, 1, Offset - 1)).AppendAnsi(
+        Copy(NewStr, Offset, Length(OldPattern))); // 必须保留原文片段的大小写
       NewStr := Copy(NewStr, Offset + Length(OldPattern), MaxInt);
     end;
     SearchStr := Copy(SearchStr, Offset + Length(Patt), MaxInt);
+  end;
+    Result := SB.ToAnsiString;
+  finally
+    SB.Free;
   end;
 end;
 
@@ -2369,7 +2408,13 @@ var
   SearchStr, Patt, NewStr: WideString;
   Offset, TailOffset: Integer;
   IsWhole: Boolean;
+  SB: TCnStringBuilder;
 begin
+  if OldPattern = '' then
+  begin
+    Result := S;
+    Exit;
+  end;
   if crfIgnoreCase in Flags then
   begin
     SearchStr := UpperCase(S);
@@ -2382,50 +2427,55 @@ begin
   end;
 
   NewStr := S;
-  Result := '';
-
-  while SearchStr <> '' do
-  begin
-    Offset := Pos(Patt, SearchStr);
-    IsWhole := True;
-    if Offset = 0 then
+  SB := TCnStringBuilder.Create(False);
+  try
+    while SearchStr <> '' do
     begin
-      Result := Result + NewStr;
-      Break;
-    end
-    else if crfWholeWord in Flags then
-    begin
-      // 找到了子串且需要整字匹配，须进行整字判断，不符合则当
-      // 有头且头非分隔符，或有尾且尾非分隔符，则非整字
-      if (Offset > 1) and not IsSepCharW(SearchStr[Offset - 1]) then
-        IsWhole := False
-      else
+      Offset := Pos(Patt, SearchStr);
+      IsWhole := True;
+      if Offset = 0 then
       begin
-        TailOffset := Offset + Length(Patt); // 指向匹配后的一个字符
-        if (TailOffset <= Length(SearchStr)) and not IsSepCharW(SearchStr[TailOffset]) then
-          IsWhole := False;
-      end;
-
-      // 得到了是否整字匹配的结论
-    end;
-
-    if not (crfWholeWord in Flags) or IsWhole then // 普通匹配或整字匹配了
-    begin
-      // 替换一次
-      Result := Result + Copy(NewStr, 1, Offset - 1) + NewPattern;
-      NewStr := Copy(NewStr, Offset + Length(OldPattern), MaxInt);
-      if not (crfReplaceAll in Flags) then
-      begin
-        Result := Result + NewStr;
+        SB.AppendWide(NewStr);
         Break;
+      end
+      else if crfWholeWord in Flags then
+      begin
+        // 找到了子串且需要整字匹配，须进行整字判断，不符合则当
+        // 有头且头非分隔符，或有尾且尾非分隔符，则非整字
+        if (Offset > 1) and not IsSepCharW(SearchStr[Offset - 1]) then
+          IsWhole := False
+        else
+        begin
+          TailOffset := Offset + Length(Patt); // 指向匹配后的一个字符
+          if (TailOffset <= Length(SearchStr)) and not IsSepCharW(SearchStr[TailOffset]) then
+            IsWhole := False;
+        end;
+
+        // 得到了是否整字匹配的结论
       end;
-    end
-    else // 整字匹配的要求下，未整字匹配，不能替换
-    begin
-      Result := Result + Copy(NewStr, 1, Offset - 1) + OldPattern; // 注意必须用 OldePattern，不能替换
-      NewStr := Copy(NewStr, Offset + Length(OldPattern), MaxInt);
+
+      if not (crfWholeWord in Flags) or IsWhole then // 普通匹配或整字匹配了
+      begin
+        // 替换一次
+        SB.AppendWide(Copy(NewStr, 1, Offset - 1)).AppendWide(NewPattern);
+        NewStr := Copy(NewStr, Offset + Length(OldPattern), MaxInt);
+        if not (crfReplaceAll in Flags) then
+        begin
+          SB.AppendWide(NewStr);
+          Break;
+        end;
+      end
+      else // 整字匹配的要求下，未整字匹配，不能替换
+      begin
+        SB.AppendWide(Copy(NewStr, 1, Offset - 1)).AppendWide(
+          Copy(NewStr, Offset, Length(OldPattern))); // 必须保留原文片段的大小写
+        NewStr := Copy(NewStr, Offset + Length(OldPattern), MaxInt);
+      end;
+      SearchStr := Copy(SearchStr, Offset + Length(Patt), MaxInt);
     end;
-    SearchStr := Copy(SearchStr, Offset + Length(Patt), MaxInt);
+    Result := SB.ToWideString;
+  finally
+    SB.Free;
   end;
 end;
 
@@ -2594,11 +2644,18 @@ begin
   Delta := Length(Value);
   if Delta <> 0 then
   begin
-    OL := CharLength;
-    CharLength := CharLength + Delta;
-    if CharLength > CharCapacity then
-      ExpandCharCapacity;
-    Move(Pointer(Value)^, (PAnsiChar(Pointer(FAnsiData)) + OL)^, Delta * SizeOf(AnsiChar));
+    OL := FCharLength;
+    if Delta > FMaxCharCapacity - OL then
+      raise ERangeError.CreateResFmt(@SListCapacityError, [OL + Delta]);
+    try
+      FCharLength := OL + Delta;
+      if CharLength > CharCapacity then
+        ExpandCharCapacity;
+      Move(Pointer(Value)^, (PAnsiChar(Pointer(FAnsiData)) + OL)^, Delta * SizeOf(AnsiChar));
+    except
+      FCharLength := OL;
+      raise;
+    end;
   end;
   Result := Self;
 end;
@@ -2612,11 +2669,18 @@ begin
   Delta := Length(Value);
   if Delta <> 0 then
   begin
-    OL := CharLength;
-    CharLength := CharLength + Delta;
-    if CharLength > CharCapacity then
-      ExpandCharCapacity;
-    Move(Pointer(Value)^, (PWideChar(Pointer(FWideData)) + OL)^, Delta * SizeOf(WideChar));
+    OL := FCharLength;
+    if Delta > FMaxCharCapacity - OL then
+      raise ERangeError.CreateResFmt(@SListCapacityError, [OL + Delta]);
+    try
+      FCharLength := OL + Delta;
+      if CharLength > CharCapacity then
+        ExpandCharCapacity;
+      Move(Pointer(Value)^, (PWideChar(Pointer(FWideData)) + OL)^, Delta * SizeOf(WideChar));
+    except
+      FCharLength := OL;
+      raise;
+    end;
   end;
   Result := Self;
 end;
@@ -2712,12 +2776,19 @@ begin
   Delta := Length(Value);
   if Delta <> 0 then
   begin
-    OL := CharLength;
-    FCharLength := CharLength + Delta;
-    if CharLength > CharCapacity then
-      ExpandCharCapacity;
+    OL := FCharLength;
+    if Delta > FMaxCharCapacity - OL then
+      raise ERangeError.CreateResFmt(@SListCapacityError, [OL + Delta]);
+    try
+      FCharLength := OL + Delta;
+      if CharLength > CharCapacity then
+        ExpandCharCapacity;
 
-    Move(Pointer(Value)^, (PChar(Pointer(FData)) + OL)^, Delta * SizeOf(Char));
+      Move(Pointer(Value)^, (PChar(Pointer(FData)) + OL)^, Delta * SizeOf(Char));
+    except
+      FCharLength := OL;
+      raise;
+    end;
   end;
   Result := Self;
 end;

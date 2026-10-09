@@ -191,6 +191,32 @@ function RemovePKCS1Padding(InData: Pointer; InDataByteLen: Integer; OutBuf: Poi
    返回值：Boolean                        - 返回对齐内容是否去除成功
 }
 
+function RemovePKCS1PaddingByType(InData: Pointer; InDataByteLen: Integer;
+  ExpectedPaddingType: Integer; OutBuf: Pointer; OutBufByteLen: Integer;
+  out OutByteLen: Integer): Boolean;
+{* 严格按调用方指定的块类型去除 PKCS#1 v1.5 填充。输入格式必须完整符合
+   EB = 00 || BT || PS || 00 || D。
+
+   只接受类型 1（CN_PKCS1_BLOCK_TYPE_PRIVATE_FF）或类型 2
+   （CN_PKCS1_BLOCK_TYPE_PUBLIC_RANDOM）。类型 1 的每个 PS 字节必须为 FF；
+   类型 2 的每个 PS 字节必须非零；两种类型的 PS 均不得少于 8 字节。
+   函数扫描完整输入块，并检查输出缓冲区容量，不自动接受输入中声明的其他块类型。
+
+   注意：该函数通过 Boolean 返回填充有效性，本身不是隐式拒绝接口。对不可信网络密文
+   不应把返回值、错误信息或处理时间直接暴露给远端调用者。
+
+   参数：
+     InData: Pointer                      - 完整 PKCS#1 v1.5 编码块的起始地址，不可为空
+     InDataByteLen: Integer               - 完整编码块的总字节长度，最少为 11
+     ExpectedPaddingType: Integer         - 期待的块类型，只能为上述类型 1 或类型 2
+     OutBuf: Pointer                      - 接收去除填充后数据 D 的输出缓冲区，不可为空
+     OutBufByteLen: Integer               - OutBuf 实际可写容量，单位为字节，不可为负数
+     out OutByteLen: Integer              - 成功时返回 D 的字节长度；失败时固定返回 0
+
+   返回值：Boolean                        - 块类型、PS、分隔符和输出容量全部有效时返回 True；
+                                            任一检查失败均返回 False，且不复制输出数据
+}
+
 function GetPKCS7PaddingByteLength(OrignalByteLen: Integer; BlockSize: Integer): Integer;
 {* 根据原始长度与块长度计算 PKCS7 对齐后的长度。
 
@@ -211,13 +237,14 @@ procedure AddPKCS7Padding(Stream: TMemoryStream; BlockSize: Integer);
    返回值：（无）
 }
 
-procedure RemovePKCS7Padding(Stream: TMemoryStream);
-{* 去除 PKCS7 规定的末尾填充“几个几”的填充数据。
+function RemovePKCS7Padding(Stream: TMemoryStream): Boolean;
+{* 去除 PKCS7 规定的末尾填充“几个几”的填充数据，返回去除是否成功。
 
    参数：
      Stream: TMemoryStream                - 待去除对齐的内存流
 
-   返回值：（无）}
+   返回值：Boolean                        - 返回去除是否成功
+}
 
 function StrAddPKCS7Padding(const Str: AnsiString; BlockSize: Integer): AnsiString;
 {* 给字符串末尾加上 PKCS7 规定的填充“几个几”的填充数据。
@@ -248,13 +275,13 @@ procedure BytesAddPKCS7Padding(var Data: TBytes; BlockSize: Integer);
    返回值：（无）
 }
 
-procedure BytesRemovePKCS7Padding(var Data: TBytes);
-{* 去除 PKCS7 规定的字节数组末尾填充“几个几”的填充数据。
+function BytesRemovePKCS7Padding(var Data: TBytes): Boolean;
+{* 去除 PKCS7 规定的字节数组末尾填充“几个几”的填充数据，返回去除是否成功。
 
    参数：
      var Data: TBytes                     - 待去除对齐的字节数组
 
-   返回值：（无）
+   返回值：Boolean                        - 返回去除是否成功
 }
 
 procedure AddPKCS5Padding(Stream: TMemoryStream);
@@ -266,13 +293,14 @@ procedure AddPKCS5Padding(Stream: TMemoryStream);
    返回值：（无）
 }
 
-procedure RemovePKCS5Padding(Stream: TMemoryStream);
+function RemovePKCS5Padding(Stream: TMemoryStream): Boolean;
 {* 去除 PKCS7 规定的末尾填充“几个几”的填充数据，遵循 PKCS7 规范但块大小固定为 8 字节。
+   返回去除是否成功。
 
    参数：
      Stream: TMemoryStream                - 待去除对齐的内存流
 
-   返回值：（无）
+   返回值：Boolean                        - 返回去除是否成功
 }
 
 function StrAddPKCS5Padding(const Str: AnsiString): AnsiString;
@@ -302,13 +330,13 @@ procedure BytesAddPKCS5Padding(var Data: TBytes);
    返回值：（无）
 }
 
-procedure BytesRemovePKCS5Padding(var Data: TBytes);
+function BytesRemovePKCS5Padding(var Data: TBytes): Boolean;
 {* 去除 PKCS7 规定的字节数组末尾填充“几个几”的填充数据，遵循 PKCS7 规范但块大小固定为 8 字节。
 
    参数：
      var Data: TBytes                     - 待去除对齐的字节数组
 
-   返回值：（无）
+   返回值：Boolean                        - 返回去除是否成功
 }
 
 function GetISO10126PaddingByteLength(OrignalByteLen: Integer; BlockSize: Integer): Integer;
@@ -331,13 +359,13 @@ procedure AddISO10126Padding(Stream: TMemoryStream; BlockSize: Integer);
    返回值：（无）
 }
 
-procedure RemoveISO10126Padding(Stream: TMemoryStream);
-{* 去除 ISO10126Padding 规定的末尾填充“零和几”的填充数据。
+function RemoveISO10126Padding(Stream: TMemoryStream): Boolean;
+{* 去除 ISO10126Padding 规定的末尾填充“零和几”的填充数据，返回去除是否成功。
 
    参数：
      Stream: TMemoryStream                - 待去除对齐的内存流
 
-   返回值：（无）
+   返回值：Boolean                        - 返回去除是否成功
 }
 
 function StrAddISO10126Padding(const Str: AnsiString; BlockSize: Integer): AnsiString;
@@ -369,13 +397,13 @@ procedure BytesAddISO10126Padding(var Data: TBytes; BlockSize: Integer);
    返回值：（无）
 }
 
-procedure BytesRemoveISO10126Padding(var Data: TBytes);
-{* 去除 ISO10126Padding 规定的字节数组末尾填充“零和几”的填充数据。
+function BytesRemoveISO10126Padding(var Data: TBytes): Boolean;
+{* 去除 ISO10126Padding 规定的字节数组末尾填充“零和几”的填充数据，返回去除是否成功。
 
    参数：
      var Data: TBytes                     - 待去除对齐的字节数组
 
-   返回值：（无）
+   返回值：Boolean                        - 返回去除是否成功
 }
 
 implementation
@@ -453,8 +481,7 @@ begin
         // 修复：原代码使用 LCG 伪随机数+时间种子，可预测，存在 Bleichenbacher 攻击风险
         if F > 0 then
         begin
-          SetLength(RandBuf, F);
-          CnRandomBytes(F);  // 调用 CnRandomBytes 生成安全随机字节
+          RandBuf := CnRandomBytes(F);  // 调用 CnRandomBytes 生成安全随机字节
           for I := 0 to F - 1 do
           begin
             if RandBuf[I] = 0 then
@@ -473,85 +500,69 @@ begin
   Result := True;
 end;
 
+function RemovePKCS1PaddingByType(InData: Pointer; InDataByteLen: Integer;
+  ExpectedPaddingType: Integer; OutBuf: Pointer; OutBufByteLen: Integer;
+  out OutByteLen: Integer): Boolean;
+var
+  P: PByteArray;
+  I, Good, FoundSep, SepPos, BeforeSep, IsZero, Hit, BadPad, DataLen: Integer;
+begin
+  Result := False;
+  OutByteLen := 0;
+  if (InData = nil) or (OutBuf = nil) or (InDataByteLen < 11)
+    or (OutBufByteLen < 0)
+    or not (ExpectedPaddingType in [CN_PKCS1_BLOCK_TYPE_PRIVATE_FF,
+      CN_PKCS1_BLOCK_TYPE_PUBLIC_RANDOM]) then
+    Exit;
+
+  P := PByteArray(InData);
+  Good := Ord(P^[0] = 0) and Ord(P^[1] = ExpectedPaddingType);
+  FoundSep := 0;
+  SepPos := 0;
+  BadPad := 0;
+
+  // 对整个剩余块做单遍扫描。类型 1 的 PS 必须逐字节为 FF；类型 2 的
+  // 第一个 00 是分隔符，因此在它之前的所有字节按定义均为非零。
+  for I := 2 to InDataByteLen - 1 do
+  begin
+    BeforeSep := 1 - FoundSep;
+    IsZero := Ord(P^[I] = 0);
+    Hit := BeforeSep and IsZero;
+    SepPos := SepPos + I * Hit;
+
+    if ExpectedPaddingType = CN_PKCS1_BLOCK_TYPE_PRIVATE_FF then
+      BadPad := BadPad or (BeforeSep and (1 - IsZero) and Ord(P^[I] <> $FF));
+
+    FoundSep := FoundSep or Hit;
+  end;
+
+  Good := Good and FoundSep and Ord(BadPad = 0);
+  Good := Good and Ord(SepPos >= 10); // 00 || BT || 至少 8 字节 PS || 00
+  DataLen := InDataByteLen - SepPos - 1;
+  Good := Good and Ord(DataLen >= 0) and Ord(DataLen <= OutBufByteLen);
+
+  if Good = 1 then
+  begin
+    if DataLen > 0 then
+      Move(P^[SepPos + 1], OutBuf^, DataLen);
+    OutByteLen := DataLen;
+    Result := True;
+  end;
+end;
+
 function RemovePKCS1Padding(InData: Pointer; InDataByteLen: Integer; OutBuf: Pointer;
   out OutByteLen: Integer): Boolean;
 var
-  P: PAnsiChar;
-  I, J, Start: Integer;
-  ValidPadding: Integer;  // 使用整数而非布尔值，避免分支
-  LeadingZeros: Integer;
-  PaddingType: Byte;
-  SeparatorFound: Integer;
+  PaddingType: Integer;
 begin
-  // 常量时间实现：无论 Padding 是否有效，都执行相同的操作次数
   Result := False;
   OutByteLen := 0;
-  P := PAnsiChar(InData);
-
-  // 计算前导零的数量（常量时间）
-  LeadingZeros := 0;
-  for I := 0 to InDataByteLen - 1 do
-  begin
-    // 使用位运算避免分支
-    ValidPadding := Ord(P[I] = #0) and Ord(I = LeadingZeros);
-    LeadingZeros := LeadingZeros + ValidPadding;
-  end;
-
-  // 检查是否有效（至少要有一个非零字节）
-  if LeadingZeros >= InDataByteLen then
+  if (InData = nil) or (InDataByteLen < 2) then
     Exit;
 
-  // 获取 Padding 类型
-  PaddingType := Ord(P[LeadingZeros]);
-
-  // 常量时间查找分隔符（00 字节）
-  Start := 0;
-  SeparatorFound := 0;
-
-  for J := LeadingZeros + 1 to InDataByteLen - 1 do
-  begin
-    case PaddingType of
-      CN_PKCS1_BLOCK_TYPE_PRIVATE_00:
-        begin
-          // 查找第一个非零字节
-          if (P[J] <> #0) and (SeparatorFound = 0) then
-          begin
-            Start := J;
-            SeparatorFound := 1;
-          end;
-        end;
-      CN_PKCS1_BLOCK_TYPE_PRIVATE_FF,
-      CN_PKCS1_BLOCK_TYPE_PUBLIC_RANDOM:
-        begin
-          // 查找第一个零字节
-          if (P[J] = #0) and (SeparatorFound = 0) then
-          begin
-            Start := J + 1;
-            SeparatorFound := 1;
-          end;
-        end;
-    end;
-  end;
-
-  // 验证 Padding 类型和分隔符
-  ValidPadding := Ord(
-    ((PaddingType = CN_PKCS1_BLOCK_TYPE_PRIVATE_00) or
-     (PaddingType = CN_PKCS1_BLOCK_TYPE_PRIVATE_FF) or
-     (PaddingType = CN_PKCS1_BLOCK_TYPE_PUBLIC_RANDOM)) and
-    (SeparatorFound = 1) and
-    (Start > 0) and
-    (Start < InDataByteLen)
-  );
-
-  // 常量时间复制数据
-  if ValidPadding = 1 then
-  begin
-    Move(P[Start], OutBuf^, InDataByteLen - Start);
-    OutByteLen := InDataByteLen - Start;
-    Result := True;
-  end;
-
-  // 注意：即使失败，也不要提前返回，保持常量时间
+  PaddingType := PByteArray(InData)^[1];
+  Result := RemovePKCS1PaddingByType(InData, InDataByteLen, PaddingType,
+    OutBuf, InDataByteLen, OutByteLen);
 end;
 
 function GetPKCS7PaddingByteLength(OrignalByteLen: Integer; BlockSize: Integer): Integer;
@@ -580,13 +591,14 @@ begin
   Stream.Write(Buf[0], R);
 end;
 
-procedure RemovePKCS7Padding(Stream: TMemoryStream);
+function RemovePKCS7Padding(Stream: TMemoryStream): Boolean;
 var
   L, I: Byte;
   Len: Cardinal;
   Mem, PBuf: Pointer;
   Valid: Boolean;
 begin
+  Result := False;
   // 去掉 Stream 末尾的 9 个 9 这种 Padding
   if Stream.Size > 1 then
   begin
@@ -601,11 +613,10 @@ begin
     PBuf := Stream.Memory;
     Valid := True;
     for I := 1 to L do
+    begin
       if PByte(TCnNativeUInt(PBuf) + Stream.Size - I)^ <> L then
-      begin
-        Valid := False;
-        Break;
-      end;
+        Valid := False;  // Constant-time: no Break, always scan all bytes
+    end;
 
     if not Valid then
       Exit;
@@ -618,6 +629,7 @@ begin
       Stream.Clear;
       Stream.Write(Mem^, Len);
       FreeMemory(Mem);
+      Result := True;
     end;
   end;
 end;
@@ -664,10 +676,7 @@ begin
   for I := 1 to V do
   begin
     if Ord(Result[L - I + 1]) <> V then
-    begin
-      Valid := False;
-      Break;
-    end;
+      Valid := False;  // Constant-time: no Break, always scan all bytes
   end;
 
   if Valid then
@@ -679,9 +688,9 @@ begin
   AddPKCS7Padding(Stream, CN_PKCS5_BLOCK_SIZE);
 end;
 
-procedure RemovePKCS5Padding(Stream: TMemoryStream);
+function RemovePKCS5Padding(Stream: TMemoryStream): Boolean;
 begin
-  RemovePKCS7Padding(Stream);
+  Result := RemovePKCS7Padding(Stream);
 end;
 
 function StrAddPKCS5Padding(const Str: AnsiString): AnsiString;
@@ -710,11 +719,11 @@ begin
     Data[L + I] := R;
 end;
 
-procedure BytesRemovePKCS7Padding(var Data: TBytes);
+function BytesRemovePKCS7Padding(var Data: TBytes): Boolean;
 var
-  L, I, V: Integer;
-  Valid: Boolean;
+  L, I, V, Diff: Integer;
 begin
+  Result := False;
   L := Length(Data);
   if L = 0 then
     Exit;
@@ -725,17 +734,18 @@ begin
   if (V < 1) or (V > CN_PKCS7_BLOCK_SIZE) or (V > L) then
     Exit;
 
-  // 验证所有填充字节都等于 V（防止 Padding Oracle 攻击）
-  Valid := True;
+  // 验证所有填充字节都等于 V。
+  // 恒定时间实现：固定扫描全部 V 个填充字节，差异按位 OR 累加，
+  // 不因首个失配字节提前退出，避免耗时依赖失配位置而被用于 Padding Oracle 计时侧信道。
+  Diff := 0;
   for I := 1 to V do
-    if Data[L - I] <> V then
-    begin
-      Valid := False;
-      Break;
-    end;
+    Diff := Diff or (Ord(Data[L - I]) xor V);
 
-  if Valid then
+  if Diff = 0 then
+  begin
     SetLength(Data, L - V);
+    Result := True;
+  end;
 end;
 
 procedure BytesAddPKCS5Padding(var Data: TBytes);
@@ -743,9 +753,9 @@ begin
   BytesAddPKCS7Padding(Data, CN_PKCS5_BLOCK_SIZE);
 end;
 
-procedure BytesRemovePKCS5Padding(var Data: TBytes);
+function BytesRemovePKCS5Padding(var Data: TBytes): Boolean;
 begin
-  BytesRemovePKCS7Padding(Data);
+  Result := BytesRemovePKCS7Padding(Data);
 end;
 
 function GetISO10126PaddingByteLength(OrignalByteLen: Integer; BlockSize: Integer): Integer;
@@ -772,9 +782,9 @@ begin
   Stream.Write(RandBuf[0], R);
 end;
 
-procedure RemoveISO10126Padding(Stream: TMemoryStream);
+function RemoveISO10126Padding(Stream: TMemoryStream): Boolean;
 begin
-  RemovePKCS7Padding(Stream); // 行为等同，可直接调用
+  Result := RemovePKCS7Padding(Stream); // 行为等同，可直接调用
 end;
 
 function StrAddISO10126Padding(const Str: AnsiString; BlockSize: Integer): AnsiString;
@@ -825,9 +835,9 @@ begin
   Data[L - 1 + R] := R;
 end;
 
-procedure BytesRemoveISO10126Padding(var Data: TBytes);
+function BytesRemoveISO10126Padding(var Data: TBytes): Boolean;
 begin
-  BytesRemovePKCS7Padding(Data); // 行为等同，可直接调用
+  Result := BytesRemovePKCS7Padding(Data); // 行为等同，可直接调用
 end;
 
 function EncryptPemStream(KeyHash: TCnKeyHashMethod; KeyEncrypt: TCnKeyEncryptMethod;
@@ -842,7 +852,7 @@ var
   AESKey128: TCnAESKey128;
   AESKey192: TCnAESKey192;
   AESKey256: TCnAESKey256;
-  AesIv: TCnAESBuffer;
+  AesIv: TCnAESIv;
   DesKey: TCnDESKey;
   Des3Key: TCn3DESKey;
   DesIv: TCnDESIv;
@@ -857,7 +867,8 @@ begin
 
   // 生成随机 Iv
   SetLength(IvStr, ENC_TYPE_BLOCK_SIZE[KeyEncrypt]);
-  CnRandomFillBytes(@(IvStr[1]), ENC_TYPE_BLOCK_SIZE[KeyEncrypt]);
+  if not CnRandomFillBytes(@(IvStr[1]), ENC_TYPE_BLOCK_SIZE[KeyEncrypt]) then
+    raise ECnRandomAPIError.Create(SCnErrorNoSecureRandom);
   HexIv := DataToHex(@(IvStr[1]), ENC_TYPE_BLOCK_SIZE[KeyEncrypt], True); // 要求大写
 
   EncryptedHead := ENC_HEAD_PROCTYPE + ' ' +  ENC_HEAD_PROCTYPE_NUM + ',' + ENC_HEAD_ENCRYPTED + CRLF;
@@ -954,7 +965,7 @@ var
   AESKey192: TCnAESKey192;
   AESKey256: TCnAESKey256;
   IvStr: AnsiString;
-  AesIv: TCnAESBuffer;
+  AesIv: TCnAESIv;
   DesKey: TCnDESKey;
   Des3Key: TCn3DESKey;
   DesIv: TCnDESIv;
@@ -992,6 +1003,10 @@ begin
     else
       Exit;
 
+    FillChar(AesIv[0], SizeOf(TCnAESBuffer), 0);
+    FillChar(DesIv[0], SizeOf(TCnDESIv), 0);
+    FillChar(Sm4Iv[0], SizeOf(TCnSM4Iv), 0);
+
     // DS 中是密文，要解到 Stream 中
     if (M1 = ENC_TYPE_AES256) and (M2 = ENC_BLOCK_CBC) then
     begin
@@ -1000,8 +1015,8 @@ begin
       Move(IvStr[1], AesIv[0], Min(SizeOf(TCnAESBuffer), Length(IvStr)));
 
       DecryptAES256StreamCBC(DS, DS.Size, AESKey256, AesIv, Stream);
-      RemovePKCS7Padding(Stream);
-      Result := True;
+      if RemovePKCS7Padding(Stream) then
+        Result := True;
     end
     else if (M1 = ENC_TYPE_AES192) and (M2 = ENC_BLOCK_CBC) then
     begin
@@ -1010,8 +1025,8 @@ begin
       Move(IvStr[1], AesIv[0], Min(SizeOf(TCnAESBuffer), Length(IvStr)));
 
       DecryptAES192StreamCBC(DS, DS.Size, AESKey192, AesIv, Stream);
-      RemovePKCS7Padding(Stream);
-      Result := True;
+      if RemovePKCS7Padding(Stream) then
+        Result := True;
     end
     else if (M1 = ENC_TYPE_AES128) and (M2 = ENC_BLOCK_CBC) then
     begin
@@ -1020,8 +1035,8 @@ begin
       Move(IvStr[1], AesIv[0], Min(SizeOf(TCnAESBuffer), Length(IvStr)));
 
       DecryptAES128StreamCBC(DS, DS.Size, AESKey128, AesIv, Stream);
-      RemovePKCS7Padding(Stream);
-      Result := True;
+      if RemovePKCS7Padding(Stream) then
+        Result := True;
     end
     else if (M1 = ENC_TYPE_DES) and (M2 = ENC_BLOCK_CBC) then
     begin
@@ -1030,8 +1045,8 @@ begin
       Move(IvStr[1], DesIv[0], Min(SizeOf(TCnDESIv), Length(IvStr)));
 
       DESDecryptStreamCBC(DS, DS.Size, DesKey, DesIv, Stream);
-      RemovePKCS7Padding(Stream);
-      Result := True;
+      if RemovePKCS7Padding(Stream) then
+        Result := True;
     end
     else if (M1 = ENC_TYPE_3DES) and (M2 = ENC_BLOCK_CBC) then
     begin
@@ -1040,8 +1055,8 @@ begin
       Move(IvStr[1], DesIv[0], Min(SizeOf(TCn3DESIv), Length(IvStr)));
 
       TripleDESDecryptStreamCBC(DS, DS.Size, Des3Key, DesIv, Stream);
-      RemovePKCS7Padding(Stream);
-      Result := True;
+      if RemovePKCS7Padding(Stream) then
+        Result := True;
     end
     else if (M1 = ENC_TYPE_SM4) and (M2 = ENC_BLOCK_CBC) then
     begin
@@ -1050,9 +1065,9 @@ begin
       Move(IvStr[1], Sm4Iv[0], Min(SizeOf(TCnSM4Iv), Length(IvStr)));
 
       SM4DecryptStreamCBC(DS, DS.Size, Sm4Key, Sm4Iv, Stream);
-      RemovePKCS7Padding(Stream);
-      Result := True;
-    end
+      if RemovePKCS7Padding(Stream) then
+        Result := True;
+    end;
   finally
     DS.Free;
   end;
@@ -1071,7 +1086,12 @@ begin
   begin
     Sl := TStringList.Create;
     try
-      Sl.LoadFromStream(Stream);
+      try
+        Sl.LoadFromStream(Stream);
+      except
+        Exit;  // 编码混乱导致异常则捕捉并返回错误
+      end;
+
       if Sl.Count > 2 then
       begin
         HeadIndex := -1;
@@ -1092,7 +1112,6 @@ begin
             Sl.Delete(0);
 
         // 找到头了，现在找尾巴
-
         TailIndex := -1;
         for I := 0 to Sl.Count - 1 do
         begin
