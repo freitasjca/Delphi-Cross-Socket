@@ -13,15 +13,15 @@ whose **only reason to exist is to be installable with [Boss](https://github.com
 - **CnPack / [`cnpack/cnvcl`](https://github.com/cnpack/cnvcl)** — a *dependency* of
   Delphi-Cross-Socket's SSL/crypto layer — also has no `boss.json` and is a huge repo.
 
-So this fork adds (a) a `boss.json`, (b) the **minimal CnPack subset** that
-Delphi-Cross-Socket actually needs, vendored under `CnPack/`, and (c) the mTLS additions
-(`Net/Net.CrossSslSocket.{Base,OpenSSL}.pas`). A consumer (e.g.
+So this fork adds (a) a `boss.json` and (b) the **minimal CnPack subset** that
+Delphi-Cross-Socket actually needs, vendored under `CnPack/`. Since v1.0.16 (2026-10-08)
+everything under `Net/` and `Utils/` is upstream's: the fork's earlier fixes (mTLS, the HEAD
+resend loop, the compression guard, `SetMinTlsVersion`, `Content-Length: 0`) are all merged
+upstream. A consumer (e.g.
 [`horse-provider-crosssocket`](https://github.com/freitasjca/horse-provider-crosssocket))
 can then `boss install` this fork and compile **without ever touching cnvcl**.
 
-> The `boss.json` `description` currently says *"adds Boss package manifest only. Zero source
-> changes"* — that is **stale**: the fork also vendors the CnPack subset and the mTLS patches.
-> Update it when convenient.
+> Check the `boss.json` `description` against the code at every release; it went stale twice.
 
 ## The invariant — what must always hold
 
@@ -48,36 +48,54 @@ CnPack/Crypto/   CnAES.pas  CnBase64.pas  CnDES.pas  CnKDF.pas  CnMD5.pas  CnNat
 > moved the foundation units to `Source/Common/` and added `CnStrings`, `CnWideStrings`,
 > `CnSM4`; the v1.0.3 re-sync follows that — hence the `Common/` directory.
 
+### Current source (fork v1.0.17)
+
+All 18 files are **byte-identical to `cnpack/cnvcl` commit `19d3f72`** (2026-10-08).
+
+- **Use `cnpack/cnvcl`, never `winddriver/cnvcl`.** The latter is a fork whose last commit
+  is from 2025-02-16.
+- **Take every file from ONE commit.** Before v1.0.17 the subset mixed versions: `CnPack.inc`
+  dated from 2025-02-15 and the units from 2025-12-31 to 2026-06-29. Each file was an
+  unmodified cnvcl version, but no single cnvcl commit ever contained that combination.
+  An audit that compared against one snapshot found 13 "differences" that were really
+  different points in time.
+- **Copy the raw blob, not a checkout.** `CnPack/** -text` in `.gitattributes` keeps these
+  files byte-exact, and cnvcl stores them CRLF. Something like
+  `git -C cnvcl show <sha>:Source/Crypto/CnSHA2.pas > CnPack/Crypto/CnSHA2.pas` reproduces
+  them exactly; a checkout through `core.autocrlf` may not.
+
 ## Re-syncing the subset when cnvcl updates
 
-1. Update your local cnvcl: `cd cnvcl && git pull --ff-only origin master`.
-2. Copy the units above from cnvcl into the fork:
+1. Pick ONE cnvcl commit and record its hash here, under "Current source".
+2. Copy the units above from that commit into the fork:
    - `cnvcl/Source/Common/{CnPack.inc,CnConsts,CnFloat,CnStrings,CnWideStrings}` → `CnPack/Common/`
    - `cnvcl/Source/Crypto/{the 13 crypto units}.pas` → `CnPack/Crypto/`
    - (verify the cnvcl source-side paths — cnvcl occasionally relocates units between
      `Source/Common` and `Source/Crypto`.)
-3. **Re-validate the closure** — the only authoritative check (the CnPack sources are
+3. **Check the API DCS uses did not move.** DCS calls only `Utils/Utils.Hash.pas`'s
+   `MD5*/SHA1*/SHA256*/SHA384*/SHA512*/SM3*` `Init/Update/Final` and their `TCn*Context` /
+   `TCn*Digest` types. Diff those declarations old vs new.
+4. **Run `tests/CnPackHashTests`**: `scripts/build-tests-fpc.sh` on FPC,
+   `tests\CnPackHashTests\build-dcc.bat` on Delphi. It hashes one message in seven split
+   patterns with every algorithm DCS takes from CnPack, against Python's hashlib. Run it on
+   the OLD subset first: before v1.0.17 SHA-384/512 failed 6 checks (cnvcl `0d2ce92`), so
+   a green run there means the test is not exercising the code.
+5. **Re-validate the closure** — the only authoritative check (the CnPack sources are
    **GBK/ANSI-encoded**, which defeats `grep`-based scans): `boss install` this fork into a
    throwaway project, or build `horse-provider-crosssocket` against it, and confirm a clean
    compile with **no missing `Cn*` unit**. If the compiler reports a missing unit, copy it in
    and repeat.
-4. Commit the subset change on its own (`git add -A CnPack/` so renames register), separate
+6. Commit the subset change on its own (`git add -A CnPack/` so renames register), separate
    from version bumps and `.gitattributes` changes.
 
-## ⚠️ Keep the fork-sync automation in step — or it reverts the subset
+## No sync automation
 
-The fork-sync (`crosssocket-fork-sync-action/` → deployed to the fork's `master` as a daily
-GitHub Action) **resets `master` to upstream's tip and re-layers the CnPack subset from a
-hardcoded list**. If that list doesn't match the inventory above, the next nightly run
-**silently restores the wrong subset and breaks the boss build.** Two files must be updated
-together with any subset change:
-
-- `.github/workflows/sync-upstream.yml` — the `Clone CnPack (cnvcl) and copy required files`
-  step (the actual `cp` list + the `mkdir CnPack/Common CnPack/Crypto`).
-- `.sync/README.md` — the human-readable manifest table (fork path ← cnvcl source path).
-
-Optionally pin `CNVCL_REF` in `sync-upstream.yml` to a validated cnvcl tag/sha instead of
-`master`, so a surprise upstream cnvcl change can't break a nightly sync.
+Earlier versions of this file described a nightly GitHub Action (`.github/workflows/sync-upstream.yml`
+plus `.sync/README.md`) that re-layered the subset from a hard-coded list. **Neither file is in
+the fork** (checked 2026-10-09). Upstream syncs are done by hand: merge `upstream/master` with
+`-X renormalize`, then confirm `git diff --ignore-cr-at-eol upstream/master -- Net Utils` lists
+nothing but untracked IDE files. If automation is ever added, its file list must match the
+inventory above.
 
 ## Consumer-side note
 
@@ -94,7 +112,6 @@ tracked, `git rm --cached` them.
 
 ## Endgame
 
-The mTLS additions are pending an upstream PR. Once upstream merges them **and** a boss-friendly
-distribution of Delphi-Cross-Socket + CnPack exists, this fork (and this whole subset-maintenance
-burden) can be retired. Until then, every cnvcl bump is a re-sync chore — keep this doc, the
-inventory, and the fork-sync manifest aligned.
+Every source change the fork carried is now upstream (v1.0.16). What keeps the fork alive is
+Boss: upstream has no `boss.json`, and CnPack has neither a `boss.json` nor a small enough
+footprint to depend on. If upstream ever ships both, this fork and this subset can be retired.
