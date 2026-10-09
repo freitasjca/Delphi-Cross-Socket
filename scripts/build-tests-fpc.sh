@@ -4,6 +4,10 @@
 #
 #    WebSocketFrameTests  — RFC 6455 per-frame masking
 #    CryptRandomTests     — the cryptographically-secure random API
+#    CnPackHashTests      — MD5/SHA-1/SHA-2 via Utils.Hash and the vendored
+#                           CnPack subset, hashed in pieces (fork-only; it is
+#                           the gate for a CnPack re-sync: SHA-384/512 fail 6
+#                           checks on the subset vendored before fork 1.0.17)
 #
 #  Both need only this library — no network, no external server — so they are
 #  the cheapest check that a change here still builds and behaves.
@@ -157,6 +161,7 @@ echo
 TESTS=(
   "WebSocketFrameTests|$DCS/Net/Tests/FPC/WebSocketFrameTests/WebSocketFrameTests.lpr"
   "CryptRandomTests|$DCS/Utils/Tests/FPC/CryptRandomTests/CryptRandomTests.lpr"
+  "CnPackHashTests|$DCS/tests/CnPackHashTests/CnPackHashTests.dpr"
 )
 
 FAILED=0
@@ -191,7 +196,7 @@ done
 
 echo "════════════════════════════════════════════════════════════"
 if [[ $FAILED -eq 0 ]]; then
-  echo " both DCS unit suites OK — necessary, NOT sufficient."
+  echo " all DCS unit suites OK — necessary, NOT sufficient."
   echo " Still untested by this script: TLS and mTLS."
   echo " See BUILDING-FPC.md."
   exit 0
